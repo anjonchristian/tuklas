@@ -226,7 +226,22 @@ export default function TutorPage() {
   const cameraInputRef = useRef<HTMLInputElement | null>(null);
   const uploadInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Load the child's Error Notebook and past sessions so memory is visible on return.
+  const refreshMemory = useCallback(async () => {
+    const id = profileIdRef.current;
+    if (!id) return;
+    try {
+      const [nb, hist] = await Promise.all([
+        apiGet<{ openErrors: NotebookError[] }>(`/api/notebook/${id}`),
+        apiGet<{ sessions: HistorySession[] }>(`/api/history/${id}`),
+      ]);
+      setNotebook(nb.openErrors ?? []);
+      setHistory(hist.sessions ?? []);
+    } catch {
+      // backend not reachable yet; the tutor still works once it is
+    }
+  }, []);
+
+  // Restore the learner's settings and memory on mount.
   useEffect(() => {
     const profile = readProfile();
     profileIdRef.current = profile.id;
@@ -237,25 +252,8 @@ export default function TutorPage() {
       setSubject(profile.subject);
       setTopic(profile.topic);
     });
-    let cancelled = false;
-    void (async () => {
-      try {
-        const [nb, hist] = await Promise.all([
-          apiGet<{ openErrors: NotebookError[] }>(`/api/notebook/${profile.id}`),
-          apiGet<{ sessions: HistorySession[] }>(`/api/history/${profile.id}`),
-        ]);
-        if (!cancelled) {
-          setNotebook(nb.openErrors ?? []);
-          setHistory(hist.sessions ?? []);
-        }
-      } catch {
-        // backend not reachable yet; the tutor still works once it is
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+    void refreshMemory();
+  }, [refreshMemory]);
 
   const playReply = useCallback(
     (text: string, audio: { base64: string; mime: string } | null) => {
@@ -399,11 +397,13 @@ export default function TutorPage() {
     [sessionId, busy, minutes, playReply],
   );
 
-  const start = useCallback(async () => {
+  const start = useCallback(async (overrides?: { subject?: string; topic?: string }) => {
     setError(null);
     setStatus("thinking");
     const profile = readProfile();
     profileIdRef.current = profile.id;
+    const usedSubject = overrides?.subject ?? subject;
+    const usedTopic = overrides?.topic ?? topic;
     try {
       const res = await fetch(apiUrl("/api/tutor/start"), {
         method: "POST",
@@ -413,8 +413,8 @@ export default function TutorPage() {
           nickname,
           homeLang,
           level,
-          subject: subject === "Other" ? customSubject.trim() || "General" : subject,
-          topic: topic || "General",
+          subject: usedSubject === "Other" ? customSubject.trim() || "General" : usedSubject,
+          topic: usedTopic || "General",
         }),
       });
       const data = await res.json();
@@ -458,7 +458,8 @@ export default function TutorPage() {
     setTurns([]);
     setMinutes(null);
     setStatus("idle");
-  }, [sessionId]);
+    void refreshMemory();
+  }, [sessionId, refreshMemory]);
 
   const toggleMic = useCallback(async () => {
     if (status === "listening") {
@@ -660,6 +661,9 @@ export default function TutorPage() {
                   >
                     <span>
                       {s.subject} · {s.topic}
+                      <span className="block font-mono text-xs text-muted-foreground">
+                        {new Date(s.startedAt).toLocaleString()} · {Math.round(s.minutes ?? 0)} min
+                      </span>
                     </span>
                     <span className="font-mono text-xs text-muted-foreground">
                       {new Date(s.startedAt).toLocaleDateString()}
@@ -681,6 +685,14 @@ export default function TutorPage() {
                           </p>
                         ))
                       )}
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="mt-1 w-fit"
+                        onClick={() => void start({ subject: s.subject, topic: s.topic })}
+                      >
+                        Practice again
+                      </Button>
                     </div>
                   ) : null}
                 </div>
@@ -886,7 +898,7 @@ export default function TutorPage() {
               Next
             </Button>
           ) : (
-            <Button onClick={start} disabled={!stepValid || busy}>
+            <Button onClick={() => void start()} disabled={!stepValid || busy}>
               Start talking
             </Button>
           )}
@@ -904,7 +916,10 @@ export default function TutorPage() {
                 <p className="font-heading text-2xl font-semibold">
                   {answered > 0 ? `${answered} cards reviewed. Nice work!` : "Nothing due right now."}
                 </p>
-                <Button onClick={() => setFlashOpen(false)}>Close</Button>
+                <Button                   onClick={() => {
+                    setFlashOpen(false);
+                    void refreshMemory();
+                  }}>Close</Button>
               </div>
             ) : (
               <>
@@ -915,6 +930,15 @@ export default function TutorPage() {
                   <p className="font-heading text-4xl font-semibold tracking-tight">
                     {flashcards[cardIndex].problem ?? flashcards[cardIndex].skill}
                   </p>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      speak(flashcards[cardIndex].problem ?? flashcards[cardIndex].skill)
+                    }
+                    className="font-mono text-xs text-muted-foreground underline underline-offset-2"
+                  >
+                    Play again
+                  </button>
                   {revealed ? (
                     <p className="font-heading text-3xl text-primary">
                       {flashcards[cardIndex].expected ?? "—"}
@@ -939,7 +963,10 @@ export default function TutorPage() {
                 </div>
                 <button
                   type="button"
-                  onClick={() => setFlashOpen(false)}
+                                    onClick={() => {
+                    setFlashOpen(false);
+                    void refreshMemory();
+                  }}
                   className="mt-5 font-mono text-xs text-muted-foreground underline underline-offset-2"
                 >
                   Close
