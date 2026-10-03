@@ -694,11 +694,21 @@ export default function TutorPage() {
             ) : null}
 
             <div className="flex flex-wrap gap-2">
-              <Button size="lg" onClick={() => void start()}>
-                Continue lesson
+              <Button
+                size="lg"
+                onClick={() => {
+                  setStep(2);
+                  setShowWizard(true);
+                }}
+              >
+                Start new session
               </Button>
-              <Button size="lg" variant="outline" onClick={() => setShowWizard(true)}>
-                Change settings
+              <Button size="lg" variant="outline" onClick={() => void start()}>
+                Continue: {subject}
+                {topic ? ` · ${topic}` : ""}
+              </Button>
+              <Button size="lg" variant="secondary" onClick={() => void openFlashcards()}>
+                Practice flashcards{notebook.length > 0 ? ` (${notebook.length})` : ""}
               </Button>
               <Button
                 size="lg"
@@ -707,9 +717,6 @@ export default function TutorPage() {
                 disabled={noteBusy}
               >
                 {noteBusy ? "Writing…" : "Note for home"}
-              </Button>
-              <Button size="lg" variant="secondary" onClick={() => void openFlashcards()}>
-                Practice flashcards{notebook.length > 0 ? ` (${notebook.length})` : ""}
               </Button>
             </div>
             {note ? <p className="text-sm">{note}</p> : null}
@@ -965,7 +972,7 @@ export default function TutorPage() {
             </Button>
           ) : (
             <Button onClick={() => void start()} disabled={!stepValid || busy}>
-              Start talking
+              Start session
             </Button>
           )}
         </div>
