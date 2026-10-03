@@ -1,0 +1,28 @@
+# Render blueprint for the Tuklas API.
+# Deploy: connect the repo, Render reads this file.
+services:
+  - type: web
+    name: tuklas-api
+    runtime: node
+    plan: free
+    rootDir: backend
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: OPENCODE_API_KEY
+        sync: false
+      - key: ELEVENLABS_API_KEY
+        sync: false
+      - key: LLM_MODEL
+        value: deepseek-v4.1-flash
+      - key: LLM_REASONING_EFFORT
+        value: none
+      - key: VOICE_FIL
+        value: Xb7hH8MSUJpSbSDYk0k2
+      - key: VOICE_CEB
+        value: Xb7hH8MSUJpSbSDYk0k2
+      - key: CORS_ORIGIN
+        value: "*"

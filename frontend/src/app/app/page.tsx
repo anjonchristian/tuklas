@@ -28,6 +28,7 @@ import {
 } from "@/components/ui/message-scroller";
 import { Textarea } from "@/components/ui/textarea";
 import { LANGUAGES, LANGUAGE_CODES, type LangCode } from "@/lib/tutor/languages";
+import { apiUrl } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 interface SpeechAlternative {
@@ -210,7 +211,7 @@ export default function TutorPage() {
       setError(null);
       setTurns((prev) => [...prev, { speaker: "learner", text, image }]);
       try {
-        const res = await fetch("/api/tutor/turn", {
+        const res = await fetch(apiUrl("/api/tutor/turn"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -244,7 +245,7 @@ export default function TutorPage() {
     const profile = readProfile();
     profileIdRef.current = profile.id;
     try {
-      const res = await fetch("/api/tutor/start", {
+      const res = await fetch(apiUrl("/api/tutor/start"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -280,7 +281,7 @@ export default function TutorPage() {
   const end = useCallback(async () => {
     if (!sessionId) return;
     window.speechSynthesis?.cancel();
-    await fetch("/api/session/end", {
+    await fetch(apiUrl("/api/session/end"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ sessionId }),
@@ -370,7 +371,7 @@ export default function TutorPage() {
         canvas.getContext("2d")?.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
         const imageDataUrl = canvas.toDataURL("image/jpeg", 0.85);
 
-        const res = await fetch("/api/scan", {
+        const res = await fetch(apiUrl("/api/scan"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ sessionId, imageDataUrl }),

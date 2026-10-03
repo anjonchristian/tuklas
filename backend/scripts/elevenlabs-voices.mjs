@@ -3,10 +3,13 @@ import path from "node:path";
 
 function loadKey() {
   if (process.env.ELEVENLABS_API_KEY) return process.env.ELEVENLABS_API_KEY;
-  const envPath = path.join(process.cwd(), ".env.local");
-  if (!fs.existsSync(envPath)) return null;
-  const match = fs.readFileSync(envPath, "utf8").match(/^\s*ELEVENLABS_API_KEY=(.+)$/m);
-  return match ? match[1].trim() : null;
+  for (const name of [".env.local", ".env"]) {
+    const envPath = path.join(process.cwd(), name);
+    if (!fs.existsSync(envPath)) continue;
+    const match = fs.readFileSync(envPath, "utf8").match(/^\s*ELEVENLABS_API_KEY=(.+)$/m);
+    if (match) return match[1].trim();
+  }
+  return null;
 }
 
 const key = loadKey();
