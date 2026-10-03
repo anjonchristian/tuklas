@@ -202,6 +202,7 @@ export default function TutorPage() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [scanning, setScanning] = useState(false);
+  const [pendingImage, setPendingImage] = useState<string | null>(null);
   const [notebook, setNotebook] = useState<NotebookError[]>([]);
   const [history, setHistory] = useState<HistorySession[]>([]);
   const [note, setNote] = useState<string | null>(null);
@@ -539,6 +540,9 @@ export default function TutorPage() {
         canvas.getContext("2d")?.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
         const imageDataUrl = canvas.toDataURL("image/jpeg", 0.85);
 
+        // Stage the image as a pending attachment; it is sent with the next message.
+        setPendingImage(imageDataUrl);
+
         const res = await fetch(apiUrl("/api/scan"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -547,19 +551,18 @@ export default function TutorPage() {
         const data = await res.json();
         if (!res.ok) {
           setError(data.error ?? "Hindi mabasa ang pahina.");
+          setPendingImage(null);
           return;
         }
         setMinutes(data.minutes);
-        setScanning(false);
-        // Put the page into the conversation so the tutor teaches from it.
-        await sendTurn("Ito ang nasa aking pahina. Tabangi ko niini.", imageDataUrl);
       } catch {
         setError("Hindi mabasa ang larawan. Subukan ulit.");
+        setPendingImage(null);
       } finally {
         setScanning(false);
       }
     },
-    [sessionId, sendTurn],
+    [sessionId],
   );
 
   const onFile = useCallback(
@@ -1098,17 +1101,39 @@ export default function TutorPage() {
 
           <div className="border-t p-4">
             <div className="rounded-2xl border bg-background p-2 transition-shadow focus-within:ring-2 focus-within:ring-ring/30">
+              {pendingImage ? (
+                <div className="mb-2 flex items-center gap-2 rounded-lg border bg-muted/40 p-2">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={pendingImage} alt="Attachment" className="size-12 rounded object-cover" />
+                  <span className="text-xs text-muted-foreground">
+                    {scanning ? "Binabasa ang pahina…" : "Nakalakip na larawan"}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setPendingImage(null)}
+                    className="ml-auto font-mono text-xs text-muted-foreground underline underline-offset-2"
+                  >
+                    Remove
+                  </button>
+                </div>
+              ) : null}
               <Textarea
                 value={textInput}
                 onChange={(e) => setTextInput(e.target.value)}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && !e.shiftKey) {
                     e.preventDefault();
-                    void sendTurn(textInput);
+                    const image = pendingImage ?? undefined;
+                    setPendingImage(null);
+                    void sendTurn(textInput, image);
                     setTextInput("");
                   }
                 }}
-                placeholder="Type a question, or attach a photo of the worksheet…"
+                placeholder={
+                  pendingImage
+                    ? "Add a note with the photo (optional)…"
+                    : "Type a question, or attach a photo of the worksheet…"
+                }
                 className="min-h-16 resize-none border-0 bg-transparent shadow-none focus-visible:ring-0 dark:bg-transparent"
               />
               <div className="flex items-center justify-between gap-2 pt-1">
@@ -1149,10 +1174,12 @@ export default function TutorPage() {
                 <Button
                   size="icon"
                   onClick={() => {
-                    void sendTurn(textInput);
+                    const image = pendingImage ?? undefined;
+                    setPendingImage(null);
+                    void sendTurn(textInput, image);
                     setTextInput("");
                   }}
-                  disabled={busy || scanning || !textInput.trim()}
+                  disabled={busy || scanning || (!textInput.trim() && !pendingImage)}
                   title="Send"
                 >
                   <ArrowUp />
