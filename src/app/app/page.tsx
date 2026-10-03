@@ -402,7 +402,10 @@ export default function TutorPage() {
     [handleScan],
   );
 
-  const activeLangs = LANGUAGE_CODES.map((code) => LANGUAGES[code]);
+  const languageOptions = LANGUAGE_CODES.map((code) => ({
+    label: LANGUAGES[code].label,
+    value: code,
+  }));
 
   if (phase === "setup") {
     const isCustom = subject === "Other";
@@ -493,25 +496,31 @@ export default function TutorPage() {
                   The tutor teaches in this language and pairs the formal terms in Filipino and English.
                 </p>
               </div>
-              <div className="grid grid-cols-2 gap-2">
-                {activeLangs.map((lang) => (
-                  <button
-                    key={lang.code}
-                    type="button"
-                    disabled={lang.status === "planned"}
-                    onClick={() => setHomeLang(lang.code)}
-                    className={cn(
-                      "rounded-lg border p-3 text-left transition-colors",
-                      homeLang === lang.code ? "border-primary bg-primary/5" : "hover:bg-muted",
-                      lang.status === "planned" && "cursor-not-allowed opacity-50",
-                    )}
-                  >
-                    <span className="block text-sm font-medium">{lang.label}</span>
-                    <span className="block text-xs text-muted-foreground">
-                      {lang.status === "planned" ? "Coming soon" : lang.region}
-                    </span>
-                  </button>
-                ))}
+              <div className="flex flex-col gap-2">
+                <label className="font-mono text-xs tracking-widest text-muted-foreground uppercase">
+                  Mother tongue
+                </label>
+                <Select
+                  items={languageOptions}
+                  value={homeLang}
+                  onValueChange={(value) => setHomeLang(String(value))}
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder="Choose a language" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {LANGUAGE_CODES.map((code) => (
+                      <SelectItem key={code} value={code}>
+                        {LANGUAGES[code].label} — {LANGUAGES[code].region}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  {LANGUAGES[homeLang]?.status === "ready"
+                    ? "Natural tutor voice available."
+                    : "The tutor answers in this language; the voice uses the browser's Filipino voice for now."}
+                </p>
               </div>
             </div>
           ) : null}

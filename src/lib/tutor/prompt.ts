@@ -78,6 +78,11 @@ export function buildGreeting(homeLang: string, topic: string): string {
     ceb: `Kumusta! Andam ka na ba nga magtuon og ${topic}?`,
     ilo: `Kumusta! Nakasagana ka kadi nga agadal iti ${topic}?`,
     war: `Kumusta! Andam ka na ba nga mag-aram it ${topic}?`,
+    hil: `Kumusta! Handa ka na bala magtuon sang ${topic}?`,
+    bcl: `Kumusta! Andam ka na daw na mag-adal nin ${topic}?`,
+    pam: `Kumusta! Makasagana ka na bang magaral ning ${topic}?`,
+    pag: `Kumusta! Sikat ka la ya mamasa ed ${topic}?`,
+    cbk: `Kumusta! Listo ya ba tu para aprende ${topic}?`,
   };
   return greetings[lang.code] ?? greetings.fil;
 }
