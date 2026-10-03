@@ -1,4 +1,5 @@
 import Link from "next/link";
+import Image from "next/image";
 import { ArrowRight, Languages, Mic, ScanLine } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -59,7 +60,8 @@ export default function Home() {
     <div className="flex flex-col flex-1">
       <header className="border-b">
         <nav className="mx-auto flex w-full max-w-5xl items-center justify-between px-6 py-4">
-          <Link href="/" className="font-heading text-lg font-semibold tracking-tight">
+          <Link href="/" className="flex items-center gap-2 font-heading text-lg font-semibold tracking-tight">
+            <Image src="/tuklas-icon.png" alt="Tuklas" width={28} height={28} className="rounded-md" priority />
             Tuklas
           </Link>
           <div className="hidden items-center gap-6 text-sm text-muted-foreground sm:flex">

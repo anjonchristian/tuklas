@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState, type ChangeEvent } from "react";
 import Link from "next/link";
+import Image from "next/image";
 import { ArrowLeft, ArrowUp, Camera, ImageUp, Mic, Square } from "lucide-react";
 import { Attachment, AttachmentMedia } from "@/components/ui/attachment";
 import { Badge } from "@/components/ui/badge";
@@ -955,7 +956,8 @@ export default function TutorPage() {
     <div className="flex h-dvh flex-col overflow-hidden">
       <header className="flex items-center justify-between border-b px-6 py-3">
         <div className="flex items-center gap-3">
-          <Link href="/" className="font-heading text-sm font-semibold">
+          <Link href="/" className="flex items-center gap-2 font-heading text-sm font-semibold">
+            <Image src="/tuklas-icon.png" alt="Tuklas" width={22} height={22} className="rounded" />
             Tuklas
           </Link>
           <Badge variant="outline" className="font-mono">
