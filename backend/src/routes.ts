@@ -197,6 +197,7 @@ router.post("/api/tutor/turn", async (req, res) => {
       subject: session.subject,
       wrongAnswer: text,
       problem: session.pageContext ?? lastTutor ?? null,
+      expected: grade.expected || null,
     });
   } else if (grade.isAnswer && grade.correct === true) {
     await repo.resolveError(session.profileId, grade.skill);
@@ -349,4 +350,43 @@ router.post("/api/class-script", async (req, res) => {
     `class-${parsed.data.profileId}`,
   );
   res.json({ text: completion.text.trim(), skills, lang: homeLang });
+});
+
+// ── Flashcards: the Error Notebook, practiced as spoken cards ──────────────
+router.get("/api/flashcards/:profileId", async (req, res) => {
+  const cards = await repo.dueErrors(req.params.profileId, 10);
+  res.json({
+    profileId: req.params.profileId,
+    cards: cards.map((e) => ({
+      skill: e.skill,
+      problem: e.problem,
+      expected: e.expected,
+      attempts: e.attempts,
+      intervalDays: e.intervalDays,
+    })),
+  });
+});
+
+router.post("/api/flashcard", async (req, res) => {
+  const schema = z.object({
+    profileId: z.string().min(1),
+    skill: z.string().min(1),
+    subject: z.string().optional(),
+    correct: z.boolean(),
+    answer: z.string().optional(),
+  });
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "Invalid body" });
+  const { profileId, skill, correct } = parsed.data;
+  if (correct) {
+    await repo.resolveError(profileId, skill);
+    return res.json({ skill, scheduled: true });
+  }
+  await repo.recordError({
+    profileId,
+    skill,
+    subject: parsed.data.subject ?? "Math",
+    wrongAnswer: parsed.data.answer ?? null,
+  });
+  res.json({ skill, scheduled: false });
 });

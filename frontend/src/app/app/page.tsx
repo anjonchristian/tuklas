@@ -108,6 +108,9 @@ interface StoredProfile {
   id: string;
   nickname: string;
   homeLang: LangCode;
+  level: number;
+  subject: string;
+  topic: string;
 }
 
 function readProfile(): StoredProfile {
@@ -115,6 +118,9 @@ function readProfile(): StoredProfile {
     id: `p_${Math.random().toString(36).slice(2, 10)}`,
     nickname: "Learner",
     homeLang: "ceb",
+    level: 1,
+    subject: "Math",
+    topic: "",
   };
   if (typeof window === "undefined") return fallback;
   const stored = window.localStorage.getItem("tuklas_profile");
@@ -131,6 +137,9 @@ function readProfile(): StoredProfile {
         parsed.homeLang && parsed.homeLang in LANGUAGES
           ? (parsed.homeLang as LangCode)
           : fallback.homeLang,
+      level: typeof parsed.level === "number" ? parsed.level : fallback.level,
+      subject: typeof parsed.subject === "string" ? parsed.subject : fallback.subject,
+      topic: typeof parsed.topic === "string" ? parsed.topic : fallback.topic,
     };
   } catch {
     return fallback;
@@ -196,6 +205,20 @@ export default function TutorPage() {
   const [history, setHistory] = useState<HistorySession[]>([]);
   const [note, setNote] = useState<string | null>(null);
   const [noteBusy, setNoteBusy] = useState(false);
+  const [showWizard, setShowWizard] = useState(false);
+  const [openSession, setOpenSession] = useState<{
+    id: string;
+    turns: { speaker: string; text: string }[];
+  } | null>(null);
+  const [historyBusy, setHistoryBusy] = useState(false);
+  const [flashOpen, setFlashOpen] = useState(false);
+  const [flashcards, setFlashcards] = useState<
+    { skill: string; problem: string | null; expected: string | null }[]
+  >([]);
+  const [cardIndex, setCardIndex] = useState(0);
+  const [revealed, setRevealed] = useState(false);
+  const [flashBusy, setFlashBusy] = useState(false);
+  const [answered, setAnswered] = useState(0);
 
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const profileIdRef = useRef<string>("");
@@ -206,6 +229,13 @@ export default function TutorPage() {
   useEffect(() => {
     const profile = readProfile();
     profileIdRef.current = profile.id;
+    queueMicrotask(() => {
+      setNickname(profile.nickname);
+      setHomeLang(profile.homeLang);
+      setLevel(profile.level);
+      setSubject(profile.subject);
+      setTopic(profile.topic);
+    });
     let cancelled = false;
     void (async () => {
       try {
@@ -263,6 +293,74 @@ export default function TutorPage() {
       setNoteBusy(false);
     }
   }, [playReply]);
+
+  const loadSession = useCallback(async (id: string) => {
+    setHistoryBusy(true);
+    setOpenSession({ id, turns: [] });
+    try {
+      const data = await apiGet<{ turns: { speaker: string; text: string }[] }>(`/api/session/${id}`);
+      setOpenSession({ id, turns: data.turns ?? [] });
+    } catch {
+      setOpenSession({ id, turns: [] });
+    } finally {
+      setHistoryBusy(false);
+    }
+  }, []);
+
+  const speak = useCallback(
+    (text: string) => {
+      if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.lang = LANGUAGES[homeLang]?.browserVoice ?? "fil-PH";
+      window.speechSynthesis.cancel();
+      window.speechSynthesis.speak(utterance);
+    },
+    [homeLang],
+  );
+
+  const openFlashcards = useCallback(async () => {
+    try {
+      const data = await apiGet<{
+        cards: { skill: string; problem: string | null; expected: string | null }[];
+      }>(`/api/flashcards/${profileIdRef.current}`);
+      const cards = data.cards ?? [];
+      setFlashcards(cards);
+      setCardIndex(0);
+      setRevealed(false);
+      setAnswered(0);
+      setFlashOpen(true);
+      const first = cards[0];
+      if (first) speak(first.problem ?? first.skill);
+    } catch {
+      setNote("Hindi makuha ang flashcards. Subukan ulit.");
+    }
+  }, [speak]);
+
+  const answerCard = useCallback(
+    async (correct: boolean) => {
+      const card = flashcards[cardIndex];
+      if (!card) return;
+      setFlashBusy(true);
+      try {
+        await apiPost("/api/flashcard", {
+          profileId: profileIdRef.current,
+          skill: card.skill,
+          subject,
+          correct,
+        });
+      } catch {
+        // keep going even if the write fails
+      }
+      setAnswered((n) => n + 1);
+      const next = cardIndex + 1;
+      setCardIndex(next);
+      setRevealed(false);
+      setFlashBusy(false);
+      const upcoming = flashcards[next];
+      if (upcoming) speak(upcoming.problem ?? upcoming.skill);
+    },
+    [flashcards, cardIndex, subject, speak],
+  );
 
   const sendTurn = useCallback(
     async (text: string, image?: string) => {
@@ -326,7 +424,14 @@ export default function TutorPage() {
       }
       window.localStorage.setItem(
         "tuklas_profile",
-        JSON.stringify({ id: profileIdRef.current, nickname, homeLang }),
+        JSON.stringify({
+          id: profileIdRef.current,
+          nickname,
+          homeLang,
+          level,
+          subject,
+          topic,
+        }),
       );
       setSessionId(data.sessionId);
       setTurns([{ speaker: "tutor", text: data.greeting }]);
@@ -487,42 +592,102 @@ export default function TutorPage() {
           <ArrowLeft className="size-3.5" /> Tuklas
         </Link>
 
-        {history.length > 0 || notebook.length > 0 ? (
-          <div className="mt-6 flex flex-col gap-4 rounded-xl border bg-muted/40 p-4">
+        {history.length > 0 && !showWizard ? (
+          <div className="mt-8 flex flex-col gap-6">
             <div>
               <p className="font-mono text-xs tracking-widest text-muted-foreground uppercase">
                 Welcome back
               </p>
-              <p className="mt-2 text-sm">
-                {notebook.length > 0
-                  ? `We still need to fix: ${notebook.map((e) => e.skill).join(", ")}.`
-                  : "You're all caught up — no open skills."}
+              <h1 className="font-heading mt-2 text-3xl font-semibold tracking-tight">
+                Kumusta, {nickname}!
+              </h1>
+              <p className="mt-2 text-sm text-muted-foreground">
+                {LANGUAGES[homeLang].label} · Grade {level}
+                {subject ? ` · ${subject}` : ""}
+                {topic ? ` · ${topic}` : ""}
               </p>
             </div>
-            {history.length > 0 ? (
-              <div className="flex flex-col gap-1">
+
+            {notebook.length > 0 ? (
+              <div className="rounded-xl border bg-muted/40 p-4">
                 <p className="font-mono text-xs tracking-widest text-muted-foreground uppercase">
-                  Recent lessons
+                  We still need to fix
                 </p>
-                {history.slice(0, 3).map((s) => (
-                  <p key={s.id} className="text-xs text-muted-foreground">
-                    {s.subject} · {s.topic} · {new Date(s.startedAt).toLocaleDateString()}
-                  </p>
-                ))}
+                <ul className="mt-2 flex flex-col gap-1">
+                  {notebook.map((e) => (
+                    <li key={e.skill} className="text-sm">
+                      {e.skill}
+                    </li>
+                  ))}
+                </ul>
               </div>
             ) : null}
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => void getParentNote()}
-              disabled={noteBusy}
-              className="w-fit"
-            >
-              {noteBusy ? "Writing…" : "Note for home"}
-            </Button>
+
+            <div className="flex flex-wrap gap-2">
+              <Button size="lg" onClick={() => void start()}>
+                Continue lesson
+              </Button>
+              <Button size="lg" variant="outline" onClick={() => setShowWizard(true)}>
+                Change settings
+              </Button>
+              <Button
+                size="lg"
+                variant="outline"
+                onClick={() => void getParentNote()}
+                disabled={noteBusy}
+              >
+                {noteBusy ? "Writing…" : "Note for home"}
+              </Button>
+              {notebook.length > 0 ? (
+                <Button size="lg" variant="secondary" onClick={() => void openFlashcards()}>
+                  Practice flashcards ({notebook.length})
+                </Button>
+              ) : null}
+            </div>
             {note ? <p className="text-sm">{note}</p> : null}
+
+            <div className="flex flex-col gap-2">
+              <p className="font-mono text-xs tracking-widest text-muted-foreground uppercase">
+                History
+              </p>
+              {history.map((s) => (
+                <div key={s.id} className="overflow-hidden rounded-lg border">
+                  <button
+                    type="button"
+                    onClick={() => void loadSession(s.id)}
+                    className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm transition-colors hover:bg-muted"
+                  >
+                    <span>
+                      {s.subject} · {s.topic}
+                    </span>
+                    <span className="font-mono text-xs text-muted-foreground">
+                      {new Date(s.startedAt).toLocaleDateString()}
+                    </span>
+                  </button>
+                  {openSession?.id === s.id ? (
+                    <div className="flex flex-col gap-2 border-t px-3 py-2">
+                      {historyBusy ? (
+                        <p className="shimmer text-xs">Binubuksan…</p>
+                      ) : openSession.turns.length === 0 ? (
+                        <p className="text-xs text-muted-foreground">No transcript.</p>
+                      ) : (
+                        openSession.turns.map((t, i) => (
+                          <p key={i} className="text-xs">
+                            <span className="font-mono text-muted-foreground uppercase">
+                              {t.speaker}:{" "}
+                            </span>
+                            {t.text}
+                          </p>
+                        ))
+                      )}
+                    </div>
+                  ) : null}
+                </div>
+              ))}
+            </div>
           </div>
-        ) : null}
+        ) : (
+          <>
 
         <div className="mt-8 flex items-center gap-2">
           {[0, 1, 2].map((index) => (
@@ -725,6 +890,63 @@ export default function TutorPage() {
             </Button>
           )}
         </div>
+          </>
+        )}
+
+        {flashOpen ? (
+          <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-background/95 p-6 backdrop-blur">
+            {flashcards.length === 0 || cardIndex >= flashcards.length ? (
+              <div className="flex flex-col items-center gap-5 text-center">
+                <p className="font-mono text-xs tracking-widest text-muted-foreground uppercase">
+                  Deck finished
+                </p>
+                <p className="font-heading text-2xl font-semibold">
+                  {answered > 0 ? `${answered} cards reviewed. Nice work!` : "Nothing due right now."}
+                </p>
+                <Button onClick={() => setFlashOpen(false)}>Close</Button>
+              </div>
+            ) : (
+              <>
+                <p className="font-mono text-xs tracking-widest text-muted-foreground uppercase">
+                  Card {cardIndex + 1} / {flashcards.length} · {flashcards[cardIndex].skill}
+                </p>
+                <div className="mt-6 flex w-full max-w-md flex-col items-center gap-6 rounded-2xl border bg-card p-10 text-center shadow-sm">
+                  <p className="font-heading text-4xl font-semibold tracking-tight">
+                    {flashcards[cardIndex].problem ?? flashcards[cardIndex].skill}
+                  </p>
+                  {revealed ? (
+                    <p className="font-heading text-3xl text-primary">
+                      {flashcards[cardIndex].expected ?? "—"}
+                    </p>
+                  ) : (
+                    <Button variant="outline" onClick={() => setRevealed(true)}>
+                      Show answer
+                    </Button>
+                  )}
+                </div>
+                <div className="mt-8 flex gap-3">
+                  <Button
+                    variant="outline"
+                    onClick={() => void answerCard(false)}
+                    disabled={flashBusy}
+                  >
+                    Missed it
+                  </Button>
+                  <Button onClick={() => void answerCard(true)} disabled={flashBusy}>
+                    Got it
+                  </Button>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setFlashOpen(false)}
+                  className="mt-5 font-mono text-xs text-muted-foreground underline underline-offset-2"
+                >
+                  Close
+                </button>
+              </>
+            )}
+          </div>
+        ) : null}
       </div>
     );
   }

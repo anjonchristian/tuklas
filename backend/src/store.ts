@@ -59,6 +59,7 @@ export const errorEvents = pgTable(
     attempts: integer("attempts").notNull().default(1),
     intervalDays: integer("interval_days").notNull().default(0),
     problem: text("problem"),
+    expected: text("expected"),
     wrongAnswer: text("wrong_answer"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).defaultNow().notNull(),
@@ -112,6 +113,7 @@ export interface ErrorRow {
   attempts: number;
   intervalDays: number;
   problem: string | null;
+  expected: string | null;
   wrongAnswer: string | null;
   createdAt: Date;
   lastSeenAt: Date;
@@ -140,6 +142,7 @@ export interface Repo {
     subject: string;
     wrongAnswer?: string | null;
     problem?: string | null;
+    expected?: string | null;
   }): Promise<void>;
   resolveError(profileId: string, skill: string): Promise<void>;
 }
@@ -239,6 +242,7 @@ class MemoryRepo implements Repo {
     subject: string;
     wrongAnswer?: string | null;
     problem?: string | null;
+    expected?: string | null;
   }) {
     const k = this.key(e.profileId, e.skill);
     const now = new Date();
@@ -251,6 +255,7 @@ class MemoryRepo implements Repo {
       existing.nextDueAt = now;
       existing.wrongAnswer = e.wrongAnswer ?? existing.wrongAnswer;
       existing.problem = e.problem ?? existing.problem;
+      existing.expected = e.expected ?? existing.expected;
     } else {
       this.errors.set(k, {
         id: id("err"),
@@ -261,6 +266,7 @@ class MemoryRepo implements Repo {
         attempts: 1,
         intervalDays: 0,
         problem: e.problem ?? null,
+        expected: e.expected ?? null,
         wrongAnswer: e.wrongAnswer ?? null,
         createdAt: now,
         lastSeenAt: now,
@@ -377,6 +383,7 @@ class DrizzleRepo implements Repo {
     subject: string;
     wrongAnswer?: string | null;
     problem?: string | null;
+    expected?: string | null;
   }) {
     await this.db
       .insert(errorEvents)
@@ -386,6 +393,7 @@ class DrizzleRepo implements Repo {
         skill: e.skill,
         subject: e.subject,
         problem: e.problem ?? null,
+        expected: e.expected ?? null,
         wrongAnswer: e.wrongAnswer ?? null,
       })
       .onConflictDoUpdate({
@@ -397,6 +405,7 @@ class DrizzleRepo implements Repo {
           intervalDays: 0,
           attempts: sql`${errorEvents.attempts} + 1`,
           problem: e.problem ?? null,
+          expected: e.expected ?? null,
           wrongAnswer: e.wrongAnswer ?? null,
         },
       });
