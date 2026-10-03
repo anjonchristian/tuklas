@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState, type ChangeEvent } from "react";
 import Link from "next/link";
 import Image from "next/image";
-import { ArrowLeft, ArrowUp, Camera, ImageUp, Mic, Square } from "lucide-react";
+import { ArrowLeft, ArrowUp, Camera, ImageUp, Layers, LogOut, Mic, Square } from "lucide-react";
 import { Attachment, AttachmentMedia } from "@/components/ui/attachment";
 import { Badge } from "@/components/ui/badge";
 import { Bubble, BubbleContent } from "@/components/ui/bubble";
@@ -986,22 +986,29 @@ export default function TutorPage() {
 
   return (
     <div className="flex h-dvh flex-col overflow-hidden">
-      <header className="flex items-center justify-between border-b px-6 py-3">
-        <div className="flex items-center gap-3">
+      <header className="flex items-center justify-between gap-2 border-b px-3 py-3 sm:px-6">
+        <div className="flex min-w-0 items-center gap-2">
           <Link href="/" className="flex items-center gap-2 font-heading text-sm font-semibold">
             <Image src="/tuklas-icon.png" alt="Tuklas" width={22} height={22} className="rounded" />
-            Tuklas
+            <span className="hidden sm:inline">Tuklas</span>
           </Link>
-          <Badge variant="outline" className="font-mono">
+          <Badge variant="outline" className="hidden font-mono sm:inline-flex">
             {LANGUAGES[homeLang].label} · Grade {level}
           </Badge>
         </div>
-        <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={() => void openFlashcards()}>
-            Flashcards
+        <div className="flex shrink-0 items-center gap-1.5">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => void openFlashcards()}
+            title="Flashcards"
+          >
+            <Layers />
+            <span className="hidden sm:inline">Flashcards</span>
           </Button>
-          <Button variant="outline" size="sm" onClick={end}>
-            End session
+          <Button variant="outline" size="sm" onClick={end} title="End session">
+            <LogOut />
+            <span className="hidden sm:inline">End session</span>
           </Button>
         </div>
       </header>
