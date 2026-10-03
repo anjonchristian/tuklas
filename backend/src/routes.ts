@@ -90,9 +90,19 @@ router.post("/api/tutor/start", async (req, res) => {
   }
   await repo.addTurn({ sessionId: session.id, speaker: "tutor", text: greeting, lang: homeLang, flagged: false });
 
+  // Speak the greeting with the real voice too (not the browser fallback).
+  let audio: { base64: string; mime: string } | null = null;
+  try {
+    const tts = await synthesize(greeting, homeLang);
+    if (tts) audio = { base64: tts.audioBase64, mime: tts.mime };
+  } catch {
+    audio = null;
+  }
+
   res.json({
     sessionId: session.id,
     greeting,
+    audio,
     reteach: reteach.map((e) => ({ skill: e.skill, attempts: e.attempts })),
     language: { code: homeLang, label: getLanguage(homeLang).label },
     minutes: { sessionMin: 0, cap: env.caps.minutesPerSession },

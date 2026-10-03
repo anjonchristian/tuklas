@@ -438,7 +438,7 @@ export default function TutorPage() {
       setTurns([{ speaker: "tutor", text: data.greeting }]);
       setMinutes(data.minutes);
       setPhase("session");
-      playReply(data.greeting, null);
+      playReply(data.greeting, data.audio ?? null);
     } catch {
       setError("Hindi makapagsimula. Subukan ulit.");
       setStatus("idle");
