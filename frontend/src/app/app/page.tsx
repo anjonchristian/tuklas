@@ -32,40 +32,14 @@ import { LANGUAGES, LANGUAGE_CODES, type LangCode } from "@/lib/tutor/languages"
 import { apiGet, apiPost, apiUrl } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
-interface SpeechAlternative {
-  transcript: string;
-}
-interface SpeechResult {
-  isFinal: boolean;
-  length: number;
-  [index: number]: SpeechAlternative;
-}
-interface SpeechResultList {
-  length: number;
-  [index: number]: SpeechResult;
-}
-interface SpeechRecognitionEventLike {
-  resultIndex: number;
-  results: SpeechResultList;
-}
-interface SpeechRecognitionErrorEventLike {
-  error: string;
-}
-interface SpeechRecognitionLike {
-  lang: string;
-  continuous: boolean;
-  interimResults: boolean;
-  start(): void;
-  stop(): void;
-  onresult: ((event: SpeechRecognitionEventLike) => void) | null;
-  onerror: ((event: SpeechRecognitionErrorEventLike) => void) | null;
-  onend: (() => void) | null;
-}
-declare global {
-  interface Window {
-    SpeechRecognition?: new () => SpeechRecognitionLike;
-    webkitSpeechRecognition?: new () => SpeechRecognitionLike;
+async function blobToBase64(blob: Blob): Promise<string> {
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  let binary = "";
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
   }
+  return btoa(binary);
 }
 
 interface ChatTurn {
@@ -98,11 +72,6 @@ interface HistorySession {
   state: string;
   minutes: number;
   startedAt: string;
-}
-
-function getAncestorSpeechCtor(): (new () => SpeechRecognitionLike) | undefined {
-  if (typeof window === "undefined") return undefined;
-  return window.SpeechRecognition ?? window.webkitSpeechRecognition;
 }
 
 interface StoredProfile {
@@ -197,7 +166,6 @@ export default function TutorPage() {
   const [turns, setTurns] = useState<ChatTurn[]>([]);
   const [minutes, setMinutes] = useState<Minutes | null>(null);
   const [status, setStatus] = useState<"idle" | "listening" | "thinking" | "speaking">("idle");
-  const [interim, setInterim] = useState("");
   const [textInput, setTextInput] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -223,7 +191,9 @@ export default function TutorPage() {
   const [flashBusy, setFlashBusy] = useState(false);
   const [answered, setAnswered] = useState(0);
 
-  const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const streamRef = useRef<MediaStream | null>(null);
   const profileIdRef = useRef<string>("");
   const cameraInputRef = useRef<HTMLInputElement | null>(null);
   const uploadInputRef = useRef<HTMLInputElement | null>(null);
@@ -463,6 +433,30 @@ export default function TutorPage() {
     void refreshMemory();
   }, [sessionId, refreshMemory]);
 
+  const transcribeAndSend = useCallback(
+    async (blob: Blob) => {
+      setStatus("thinking");
+      try {
+        const audioBase64 = await blobToBase64(blob);
+        const data = await apiPost<{ text: string; language: string }>("/api/stt", {
+          audioBase64,
+          mime: blob.type || "audio/webm",
+        });
+        const text = (data.text ?? "").trim();
+        if (!text) {
+          setError("Wala akong narinig. Subukan ulit.");
+          setStatus("idle");
+          return;
+        }
+        await sendTurn(text);
+      } catch {
+        setError("Hindi makuha ang transcription. Subukan ulit.");
+        setStatus("idle");
+      }
+    },
+    [sendTurn],
+  );
+
   const startListening = useCallback(async () => {
     if (status === "listening" || busy || scanning) return;
     if (!window.isSecureContext) {
@@ -471,62 +465,45 @@ export default function TutorPage() {
       );
       return;
     }
-    const Ctor = getAncestorSpeechCtor();
-    if (!Ctor) {
+    if (typeof MediaRecorder === "undefined") {
       setError(
-        "Hindi sinusuportahan ng browser na ito ang voice input. Gamitin ang Chrome o Edge, o mag-type sa ibaba.",
+        "Hindi sinusuportahan ng browser na ito ang voice input. Mag-type o gamitin ang number pad.",
       );
       return;
     }
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      stream.getTracks().forEach((track) => track.stop());
+      streamRef.current = stream;
+      audioChunksRef.current = [];
+      const mimeType = MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm" : "";
+      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) audioChunksRef.current.push(event.data);
+      };
+      recorder.onstop = () => {
+        streamRef.current?.getTracks().forEach((track) => track.stop());
+        streamRef.current = null;
+        const blob = new Blob(audioChunksRef.current, { type: recorder.mimeType || "audio/webm" });
+        audioChunksRef.current = [];
+        // Ignore taps that captured almost nothing.
+        if (blob.size < 1200) {
+          setStatus("idle");
+          return;
+        }
+        void transcribeAndSend(blob);
+      };
+      mediaRecorderRef.current = recorder;
+      setError(null);
+      setStatus("listening");
+      recorder.start();
     } catch {
       setError("Hindi ma-access ang mikropono. Payagan ang microphone sa browser, o mag-type.");
-      return;
     }
-
-    const recognition = new Ctor();
-    recognition.lang = LANGUAGES[homeLang]?.asr.bcp47 ?? "fil-PH";
-    recognition.continuous = false;
-    recognition.interimResults = true;
-    recognition.onresult = (event) => {
-      let text = "";
-      let isFinal = false;
-      for (let i = event.resultIndex; i < event.results.length; i += 1) {
-        text += event.results[i][0].transcript;
-        if (event.results[i].isFinal) isFinal = true;
-      }
-      setInterim(text);
-      if (isFinal) {
-        setInterim("");
-        recognition.stop();
-        void sendTurn(text.trim());
-      }
-    };
-    recognition.onerror = (event) => {
-      setInterim("");
-      setStatus("idle");
-      const code = event.error;
-      if (code === "no-speech")
-        setError("Wala akong narinig. Pindutin at hawakan habang nagsasalita.");
-      else if (code === "not-allowed" || code === "service-not-allowed")
-        setError("Hindi pinayagan ang mikropono. Payagan ito sa browser at subukan ulit.");
-      else if (code === "audio-capture") setError("Walang nakita na mikropono.");
-      else if (code === "network") setError("May problema sa network para sa voice input.");
-      else if (code !== "aborted") setError(`Voice input error: ${code}`);
-    };
-    recognition.onend = () => {
-      setStatus((current) => (current === "listening" ? "idle" : current));
-    };
-    recognitionRef.current = recognition;
-    setError(null);
-    setStatus("listening");
-    recognition.start();
-  }, [status, busy, scanning, homeLang, sendTurn]);
+  }, [status, busy, scanning, transcribeAndSend]);
 
   const stopListening = useCallback(() => {
-    recognitionRef.current?.stop();
+    const recorder = mediaRecorderRef.current;
+    if (recorder && recorder.state !== "inactive") recorder.stop();
   }, []);
 
   const handleScan = useCallback(
@@ -1060,17 +1037,6 @@ export default function TutorPage() {
                         </Message>
                       </MessageScrollerItem>
                     ))}
-                    {interim ? (
-                      <MessageScrollerItem messageId="interim">
-                        <Message align="end">
-                          <MessageContent>
-                            <Bubble align="end" variant="secondary">
-                              <BubbleContent>{interim}</BubbleContent>
-                            </Bubble>
-                          </MessageContent>
-                        </Message>
-                      </MessageScrollerItem>
-                    ) : null}
                     {status === "thinking" ? (
                       <MessageScrollerItem messageId="thinking">
                         <Message align="start">

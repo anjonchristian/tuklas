@@ -2,7 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { env } from "./env";
 import { getLanguage } from "./languages";
-import { chatComplete, extractPage, synthesize, type ChatMessage } from "./providers";
+import { chatComplete, extractPage, synthesize, transcribe, type ChatMessage } from "./providers";
 import { buildClassScriptPrompt, buildGradePrompt, buildGreeting, buildParentNotePrompt, buildSystemPrompt, enforceHintPolicy, parseGradeJson, type GradeResult } from "./tutor";
 import { makeRepo, type Repo } from "./store";
 
@@ -263,6 +263,26 @@ router.post("/api/session/end", async (req, res) => {
   await repo.endSession(session.id, Number(minutes.toFixed(2)));
   const open = await repo.listOpenErrors(session.profileId);
   res.json({ minutes: Number(minutes.toFixed(2)), openErrors: open.length });
+});
+
+// ── Speech-to-text (server-side, so any language/device works) ─────────────
+router.post("/api/stt", async (req, res) => {
+  const schema = z.object({
+    audioBase64: z.string().min(1),
+    mime: z.string().optional(),
+  });
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "Invalid body" });
+  try {
+    const buffer = Buffer.from(parsed.data.audioBase64, "base64");
+    const result = await transcribe(buffer, parsed.data.mime ?? "audio/webm");
+    res.json(result);
+  } catch (err) {
+    res.status(502).json({
+      error: "Hindi makuha ang transcription. Subukan ulit.",
+      detail: String(err).slice(0, 200),
+    });
+  }
 });
 
 // ── The Error Notebook ─────────────────────────────────────────────────────

@@ -136,6 +136,27 @@ export interface TtsResult {
   chars: number;
 }
 
+/** Speech-to-text via ElevenLabs Scribe. Auto-detects the spoken language. */
+export async function transcribe(
+  audio: Buffer,
+  mime: string,
+): Promise<{ text: string; language: string }> {
+  if (!env.elevenLabsKey) throw new Error("ELEVENLABS_API_KEY not configured");
+  const form = new FormData();
+  form.append("file", new Blob([audio], { type: mime }), "audio.webm");
+  form.append("model_id", "scribe_v1");
+
+  const res = await fetch("https://api.elevenlabs.io/v1/speech-to-text", {
+    method: "POST",
+    headers: { "xi-api-key": env.elevenLabsKey },
+    body: form,
+  });
+
+  if (!res.ok) throw new Error(`STT failed: ${res.status} ${await res.text()}`);
+  const data = (await res.json()) as { text?: string; language_code?: string };
+  return { text: data.text?.trim() ?? "", language: data.language_code ?? "" };
+}
+
 const audioCache = new Map<string, { audioBase64: string; mime: string }>();
 
 /** Synthesize speech with ElevenLabs. Returns null to signal "use browser voice". */
