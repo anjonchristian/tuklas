@@ -1,11 +1,31 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, type ChangeEvent } from "react";
+import { useCallback, useRef, useState, type ChangeEvent } from "react";
 import Link from "next/link";
-import { ArrowLeft, Camera, ImageUp, Mic, Square } from "lucide-react";
+import { ArrowLeft, ArrowUp, Camera, ImageUp, Mic, Square } from "lucide-react";
+import { Attachment, AttachmentMedia } from "@/components/ui/attachment";
 import { Badge } from "@/components/ui/badge";
-import { Button, buttonVariants } from "@/components/ui/button";
+import { Bubble, BubbleContent } from "@/components/ui/bubble";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Markdown } from "@/components/markdown";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Message, MessageContent } from "@/components/ui/message";
+import {
+  MessageScroller,
+  MessageScrollerButton,
+  MessageScrollerContent,
+  MessageScrollerItem,
+  MessageScrollerProvider,
+  MessageScrollerViewport,
+} from "@/components/ui/message-scroller";
 import { Textarea } from "@/components/ui/textarea";
 import { LANGUAGES, LANGUAGE_CODES, type LangCode } from "@/lib/tutor/languages";
 import { cn } from "@/lib/utils";
@@ -49,6 +69,7 @@ declare global {
 interface ChatTurn {
   speaker: "learner" | "tutor";
   text: string;
+  image?: string;
 }
 
 interface Minutes {
@@ -58,11 +79,6 @@ interface Minutes {
   learnerWeekCap: number;
   classDayMin: number;
   classDayCostPhp: number;
-}
-
-interface ScanItem {
-  number: string;
-  text: string;
 }
 
 function getAncestorSpeechCtor(): (new () => SpeechRecognitionLike) | undefined {
@@ -103,32 +119,66 @@ function readProfile(): StoredProfile {
   }
 }
 
+const GRADE_OPTIONS = Array.from({ length: 6 }, (_, index) => ({
+  label: `Grade ${index + 1}`,
+  value: String(index + 1),
+}));
+
+const SUBJECTS: { label: string; value: string; topics: string[] }[] = [
+  {
+    label: "Math",
+    value: "Math",
+    topics: ["Addition", "Subtraction", "Multiplication", "Division", "Fractions", "Word problems"],
+  },
+  { label: "Science", value: "Science", topics: ["Plants", "Animals", "Matter", "Weather", "The solar system"] },
+  { label: "English", value: "English", topics: ["Reading", "Vocabulary", "Grammar", "Spelling"] },
+  { label: "Filipino", value: "Filipino", topics: ["Pagbasa", "Talasalitaan", "Gramatika", "Pagsulat"] },
+  { label: "Araling Panlipunan", value: "Araling Panlipunan", topics: ["Kasaysayan", "Heograpiya", "Pamahalaan"] },
+  { label: "MAPEH", value: "MAPEH", topics: ["Music", "Arts", "Physical Education", "Health"] },
+  { label: "Other school subject", value: "Other", topics: [] },
+];
+
+/** A custom subject must look like a school subject (spec: school-related only). */
+const SCHOOL_SUBJECT_KEYWORDS = [
+  "math", "algebra", "geometry", "trigonometry", "calculus", "statistics", "arithmetic",
+  "science", "physics", "chemistry", "biology", "earth", "astronomy", "space",
+  "english", "grammar", "reading", "writing", "literature", "spelling", "vocabulary", "comprehension",
+  "filipino", "tagalog", "cebuano", "ilocano", "waray", "mother tongue",
+  "araling", "history", "kasaysayan", "geography", "heograpiya", "economics", "civics", "government",
+  "mapeh", "music", "arts", "art", "physical education", "pe", "health", "sports",
+  "tle", "ict", "computer", "technology", "livelihood", "agriculture", "home economics", "cookery",
+  "values", "esp", "edukasyon", "accounting", "business", "entrepreneurship", "research",
+];
+
+function isSchoolSubject(value: string): boolean {
+  const normalized = value.trim().toLowerCase();
+  if (normalized.length < 2) return false;
+  return SCHOOL_SUBJECT_KEYWORDS.some((keyword) => normalized.includes(keyword));
+}
+
 export default function TutorPage() {
   const [phase, setPhase] = useState<"setup" | "session">("setup");
   const [nickname, setNickname] = useState("Learner");
   const [homeLang, setHomeLang] = useState<LangCode>("ceb");
   const [level, setLevel] = useState(1);
-  const [subject] = useState("Math");
-  const [topic, setTopic] = useState("addition");
+  const [subject, setSubject] = useState("Math");
+  const [topic, setTopic] = useState("");
+  const [step, setStep] = useState(0);
+  const [customSubject, setCustomSubject] = useState("");
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [turns, setTurns] = useState<ChatTurn[]>([]);
   const [minutes, setMinutes] = useState<Minutes | null>(null);
   const [status, setStatus] = useState<"idle" | "listening" | "thinking" | "speaking">("idle");
   const [interim, setInterim] = useState("");
   const [textInput, setTextInput] = useState("");
-  const [pageText, setPageText] = useState<string | null>(null);
-  const [scanItems, setScanItems] = useState<ScanItem[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [scanning, setScanning] = useState(false);
 
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const profileIdRef = useRef<string>("");
-  const scrollRef = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
-  }, [turns, interim]);
+  const cameraInputRef = useRef<HTMLInputElement | null>(null);
+  const uploadInputRef = useRef<HTMLInputElement | null>(null);
 
   const playReply = useCallback(
     (text: string, audio: { base64: string; mime: string } | null) => {
@@ -153,17 +203,20 @@ export default function TutorPage() {
   );
 
   const sendTurn = useCallback(
-    async (text: string) => {
-      if (!sessionId || !text.trim() || busy) return;
+    async (text: string, image?: string) => {
+      if (!sessionId || (!text.trim() && !image) || busy) return;
       setBusy(true);
       setStatus("thinking");
       setError(null);
-      setTurns((prev) => [...prev, { speaker: "learner", text }]);
+      setTurns((prev) => [...prev, { speaker: "learner", text, image }]);
       try {
         const res = await fetch("/api/tutor/turn", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ sessionId, text }),
+          body: JSON.stringify({
+            sessionId,
+            text: text || "Ito ang nasa aking pahina. Tabangi ko niini.",
+          }),
         });
         const data = await res.json();
         if (!res.ok) {
@@ -199,8 +252,8 @@ export default function TutorPage() {
           nickname,
           homeLang,
           level,
-          subject,
-          topic,
+          subject: subject === "Other" ? customSubject.trim() || "General" : subject,
+          topic: topic || "General",
         }),
       });
       const data = await res.json();
@@ -222,7 +275,7 @@ export default function TutorPage() {
       setError("Hindi makapagsimula. Subukan ulit.");
       setStatus("idle");
     }
-  }, [nickname, homeLang, level, subject, topic, playReply]);
+  }, [nickname, homeLang, level, subject, topic, customSubject, playReply]);
 
   const end = useCallback(async () => {
     if (!sessionId) return;
@@ -235,22 +288,36 @@ export default function TutorPage() {
     setPhase("setup");
     setSessionId(null);
     setTurns([]);
-    setPageText(null);
-    setScanItems([]);
     setMinutes(null);
     setStatus("idle");
   }, [sessionId]);
 
-  const toggleMic = useCallback(() => {
+  const toggleMic = useCallback(async () => {
     if (status === "listening") {
       recognitionRef.current?.stop();
       return;
     }
-    const Ctor = getAncestorSpeechCtor();
-    if (!Ctor) {
-      setError("Hindi supported ng browser ang voice input. Pwede kang mag-type sa ibaba.");
+    if (!window.isSecureContext) {
+      setError(
+        "Kailangan ng https o localhost para sa mikropono. Buksan ang http://localhost:3000.",
+      );
       return;
     }
+    const Ctor = getAncestorSpeechCtor();
+    if (!Ctor) {
+      setError(
+        "Hindi sinusuportahan ng browser na ito ang voice input. Gamitin ang Chrome o Edge, o mag-type sa ibaba.",
+      );
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream.getTracks().forEach((track) => track.stop());
+    } catch {
+      setError("Hindi ma-access ang mikropono. Payagan ang microphone sa browser, o mag-type.");
+      return;
+    }
+
     const recognition = new Ctor();
     recognition.lang = LANGUAGES[homeLang]?.asr.bcp47 ?? "fil-PH";
     recognition.continuous = false;
@@ -269,14 +336,22 @@ export default function TutorPage() {
         void sendTurn(text.trim());
       }
     };
-    recognition.onerror = () => {
+    recognition.onerror = (event) => {
       setInterim("");
       setStatus("idle");
+      const code = event.error;
+      if (code === "no-speech") setError("Wala akong narinig. Subukan ulit.");
+      else if (code === "not-allowed" || code === "service-not-allowed")
+        setError("Hindi pinayagan ang mikropono. Payagan ito sa browser at subukan ulit.");
+      else if (code === "audio-capture") setError("Walang nakita na mikropono.");
+      else if (code === "network") setError("May problema sa network para sa voice input.");
+      else setError(`Voice input error: ${code}`);
     };
     recognition.onend = () => {
       setStatus((current) => (current === "listening" ? "idle" : current));
     };
     recognitionRef.current = recognition;
+    setError(null);
     setStatus("listening");
     recognition.start();
   }, [status, homeLang, sendTurn]);
@@ -285,7 +360,6 @@ export default function TutorPage() {
     async (file: File) => {
       if (!sessionId) return;
       setError(null);
-      setBusy(true);
       setScanning(true);
       try {
         const bitmap = await createImageBitmap(file);
@@ -306,21 +380,17 @@ export default function TutorPage() {
           setError(data.error ?? "Hindi mabasa ang pahina.");
           return;
         }
-        setPageText(data.text);
-        setScanItems(data.items ?? []);
         setMinutes(data.minutes);
-        setTurns((prev) => [
-          ...prev,
-          { speaker: "learner", text: "Ito ang nasa pahina ko… (nakita na ng tutor)" },
-        ]);
+        setScanning(false);
+        // Put the page into the conversation so the tutor teaches from it.
+        await sendTurn("Ito ang nasa aking pahina. Tabangi ko niini.", imageDataUrl);
       } catch {
         setError("Hindi mabasa ang larawan. Subukan ulit.");
       } finally {
-        setBusy(false);
         setScanning(false);
       }
     },
-    [sessionId],
+    [sessionId, sendTurn],
   );
 
   const onFile = useCallback(
@@ -335,88 +405,224 @@ export default function TutorPage() {
   const activeLangs = LANGUAGE_CODES.map((code) => LANGUAGES[code]);
 
   if (phase === "setup") {
+    const isCustom = subject === "Other";
+    const topics = SUBJECTS.find((item) => item.value === subject)?.topics ?? [];
+    const customValid = !isCustom || isSchoolSubject(customSubject);
+    const stepValid =
+      step === 0
+        ? nickname.trim().length > 0
+        : step === 1
+          ? true
+          : Boolean(subject) &&
+            (isCustom ? customValid && customSubject.trim().length > 0 : Boolean(topic));
+
     return (
-      <div className="mx-auto flex w-full max-w-2xl flex-1 flex-col gap-8 px-6 py-12">
+      <div className="mx-auto flex w-full max-w-lg flex-1 flex-col px-6 py-10">
         <Link href="/" className="flex items-center gap-2 font-mono text-xs text-muted-foreground">
           <ArrowLeft className="size-3.5" /> Tuklas
         </Link>
-        <div>
-          <h1 className="font-heading text-3xl font-semibold tracking-tight">
-            Set up the tutor
-          </h1>
-          <p className="mt-2 text-sm text-muted-foreground">
-            Choose the language the learner thinks in. The tutor will teach in it.
-          </p>
-        </div>
 
-        <div className="flex flex-col gap-2">
-          <label className="font-mono text-xs uppercase tracking-widest text-muted-foreground">
-            Mother tongue
-          </label>
-          <div className="grid grid-cols-2 gap-2">
-            {activeLangs.map((lang) => (
-              <button
-                key={lang.code}
-                type="button"
-                disabled={lang.status === "planned"}
-                onClick={() => setHomeLang(lang.code)}
-                className={cn(
-                  "rounded-lg border p-3 text-left transition-colors",
-                  homeLang === lang.code ? "border-primary bg-primary/5" : "hover:bg-muted",
-                  lang.status === "planned" && "cursor-not-allowed opacity-50",
-                )}
-              >
-                <span className="block text-sm font-medium">{lang.label}</span>
-                <span className="block text-xs text-muted-foreground">
-                  {lang.status === "planned" ? "Coming soon" : lang.region}
-                </span>
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div className="grid grid-cols-3 gap-3">
-          <div className="flex flex-col gap-2">
-            <label htmlFor="nickname" className="font-mono text-xs uppercase tracking-widest text-muted-foreground">
-              Nickname
-            </label>
-            <Input id="nickname" value={nickname} onChange={(e) => setNickname(e.target.value)} />
-          </div>
-          <div className="flex flex-col gap-2">
-            <label htmlFor="level" className="font-mono text-xs uppercase tracking-widest text-muted-foreground">
-              Grade
-            </label>
-            <Input
-              id="level"
-              type="number"
-              min={1}
-              max={6}
-              value={level}
-              onChange={(e) => setLevel(Number(e.target.value) || 1)}
+        <div className="mt-8 flex items-center gap-2">
+          {[0, 1, 2].map((index) => (
+            <span
+              key={index}
+              className={cn(
+                "h-1.5 flex-1 rounded-full transition-colors",
+                index <= step ? "bg-primary" : "bg-muted",
+              )}
             />
-          </div>
-          <div className="flex flex-col gap-2">
-            <label htmlFor="topic" className="font-mono text-xs uppercase tracking-widest text-muted-foreground">
-              Topic
-            </label>
-            <Input id="topic" value={topic} onChange={(e) => setTopic(e.target.value)} />
-          </div>
+          ))}
+        </div>
+        <p className="mt-3 font-mono text-xs tracking-widest text-muted-foreground uppercase">
+          Step {step + 1} of 3
+        </p>
+
+        <div className="mt-8 flex-1">
+          {step === 0 ? (
+            <div className="flex flex-col gap-6">
+              <div>
+                <h1 className="font-heading text-3xl font-semibold tracking-tight">
+                  Who is learning?
+                </h1>
+                <p className="mt-2 text-sm text-muted-foreground">
+                  A nickname is enough. No account, no full name.
+                </p>
+              </div>
+              <div className="flex flex-col gap-2">
+                <label
+                  htmlFor="nickname"
+                  className="font-mono text-xs tracking-widest text-muted-foreground uppercase"
+                >
+                  Nickname
+                </label>
+                <Input id="nickname" value={nickname} onChange={(e) => setNickname(e.target.value)} />
+              </div>
+              <div className="flex flex-col gap-2">
+                <label className="font-mono text-xs tracking-widest text-muted-foreground uppercase">
+                  Grade level
+                </label>
+                <Select
+                  items={GRADE_OPTIONS}
+                  value={String(level)}
+                  onValueChange={(value) => setLevel(Number(value))}
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder="Select a grade" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectGroup>
+                      {GRADE_OPTIONS.map((grade) => (
+                        <SelectItem key={grade.value} value={grade.value}>
+                          {grade.label}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          ) : null}
+
+          {step === 1 ? (
+            <div className="flex flex-col gap-6">
+              <div>
+                <h1 className="font-heading text-3xl font-semibold tracking-tight">
+                  Which language does the learner think in?
+                </h1>
+                <p className="mt-2 text-sm text-muted-foreground">
+                  The tutor teaches in this language and pairs the formal terms in Filipino and English.
+                </p>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                {activeLangs.map((lang) => (
+                  <button
+                    key={lang.code}
+                    type="button"
+                    disabled={lang.status === "planned"}
+                    onClick={() => setHomeLang(lang.code)}
+                    className={cn(
+                      "rounded-lg border p-3 text-left transition-colors",
+                      homeLang === lang.code ? "border-primary bg-primary/5" : "hover:bg-muted",
+                      lang.status === "planned" && "cursor-not-allowed opacity-50",
+                    )}
+                  >
+                    <span className="block text-sm font-medium">{lang.label}</span>
+                    <span className="block text-xs text-muted-foreground">
+                      {lang.status === "planned" ? "Coming soon" : lang.region}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          {step === 2 ? (
+            <div className="flex flex-col gap-6">
+              <div>
+                <h1 className="font-heading text-3xl font-semibold tracking-tight">What subject?</h1>
+                <p className="mt-2 text-sm text-muted-foreground">
+                  School subjects only. Pick a topic, or choose “Other” for a custom one.
+                </p>
+              </div>
+              <div className="flex flex-col gap-2">
+                <label className="font-mono text-xs tracking-widest text-muted-foreground uppercase">
+                  Subject
+                </label>
+                <Select
+                  items={SUBJECTS.map((item) => ({ label: item.label, value: item.value }))}
+                  value={subject}
+                  onValueChange={(value) => {
+                    setSubject(String(value));
+                    setTopic("");
+                  }}
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder="Choose a subject" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectGroup>
+                      {SUBJECTS.map((item) => (
+                        <SelectItem key={item.value} value={item.value}>
+                          {item.label}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {isCustom ? (
+                <div className="flex flex-col gap-2">
+                  <label
+                    htmlFor="custom-subject"
+                    className="font-mono text-xs tracking-widest text-muted-foreground uppercase"
+                  >
+                    Custom subject
+                  </label>
+                  <Input
+                    id="custom-subject"
+                    value={customSubject}
+                    onChange={(e) => setCustomSubject(e.target.value)}
+                    placeholder="e.g. Algebra, Chemistry, Reading"
+                  />
+                  {customSubject.trim() && !customValid ? (
+                    <p className="text-xs text-destructive">
+                      Only school subjects are allowed — try Math, Science, English, or Filipino.
+                    </p>
+                  ) : null}
+                </div>
+              ) : topics.length > 0 ? (
+                <div className="flex flex-col gap-2">
+                  <label className="font-mono text-xs tracking-widest text-muted-foreground uppercase">
+                    Topic
+                  </label>
+                  <div className="flex flex-wrap gap-2">
+                    {topics.map((item) => (
+                      <button
+                        key={item}
+                        type="button"
+                        onClick={() => setTopic(item)}
+                        className={cn(
+                          "rounded-full border px-3 py-1 text-xs transition-colors",
+                          topic === item ? "border-primary bg-primary/5" : "hover:bg-muted",
+                        )}
+                      >
+                        {item}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
         </div>
 
         {error ? <p className="text-sm text-destructive">{error}</p> : null}
 
-        <Button size="lg" onClick={start} className="w-full">
-          Start talking
-        </Button>
-        <p className="font-mono text-xs text-muted-foreground">
-          No install. No account. Works on a phone browser.
-        </p>
+        <div className="mt-8 flex items-center justify-between gap-3">
+          <Button
+            variant="outline"
+            onClick={() => setStep((current) => Math.max(0, current - 1))}
+            disabled={step === 0}
+          >
+            Back
+          </Button>
+          {step < 2 ? (
+            <Button onClick={() => setStep((current) => current + 1)} disabled={!stepValid}>
+              Next
+            </Button>
+          ) : (
+            <Button onClick={start} disabled={!stepValid || busy}>
+              Start talking
+            </Button>
+          )}
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="flex flex-1 flex-col">
+    <div className="flex h-dvh flex-col overflow-hidden">
       <header className="flex items-center justify-between border-b px-6 py-3">
         <div className="flex items-center gap-3">
           <Link href="/" className="font-heading text-sm font-semibold">
@@ -431,173 +637,174 @@ export default function TutorPage() {
         </Button>
       </header>
 
-      <div className="mx-auto grid w-full max-w-5xl flex-1 grid-cols-1 gap-0 md:grid-cols-[1fr_300px]">
-        <section className="flex min-h-0 flex-col border-r">
-          <div ref={scrollRef} className="flex-1 space-y-4 overflow-y-auto px-6 py-6">
-            {turns.map((turn, index) => (
-              <div
-                key={index}
-                className={cn(
-                  "max-w-[85%] rounded-lg px-4 py-2.5 text-sm",
-                  turn.speaker === "tutor"
-                    ? "bg-muted"
-                    : "ml-auto bg-primary text-primary-foreground",
-                )}
-              >
-                <p className="font-mono text-[10px] uppercase tracking-widest opacity-60">
-                  {turn.speaker === "tutor" ? "Tutor" : "Learner"}
-                </p>
-                <p className="mt-1">{turn.text}</p>
-              </div>
-            ))}
-            {interim ? (
-              <div className="max-w-[85%] rounded-lg bg-primary/70 px-4 py-2.5 text-sm text-primary-foreground">
-                {interim}
-              </div>
-            ) : null}
-            {status === "thinking" ? (
-              <div className="max-w-[85%] rounded-lg bg-muted px-4 py-2.5">
-                <p className="shimmer text-sm">Nag-iisip…</p>
-              </div>
-            ) : null}
-            {error ? <p className="text-sm text-destructive">{error}</p> : null}
+      <div className="mx-auto flex min-h-0 w-full max-w-3xl flex-1 flex-col">
+        <section className="flex min-h-0 flex-1 flex-col">
+          <div className="min-h-0 flex-1">
+            <MessageScrollerProvider autoScroll>
+              <MessageScroller>
+                <MessageScrollerViewport className="px-6 py-6">
+                  <MessageScrollerContent>
+                    {turns.map((turn, index) => (
+                      <MessageScrollerItem
+                        key={`${turn.speaker}-${index}`}
+                        messageId={`turn-${index}`}
+                        scrollAnchor={turn.speaker === "learner"}
+                      >
+                        <Message align={turn.speaker === "learner" ? "end" : "start"}>
+                          <MessageContent>
+                            {turn.image ? (
+                              <Attachment size="sm" orientation="vertical">
+                                <AttachmentMedia variant="image">
+                                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                                  <img src={turn.image} alt="Worksheet page" />
+                                </AttachmentMedia>
+                              </Attachment>
+                            ) : null}
+                            {turn.text ? (
+                              <Bubble
+                                align={turn.speaker === "learner" ? "end" : "start"}
+                                variant={turn.speaker === "learner" ? "default" : "muted"}
+                              >
+                                <BubbleContent>
+                                  {turn.speaker === "tutor" ? (
+                                    <Markdown>{turn.text}</Markdown>
+                                  ) : (
+                                    turn.text
+                                  )}
+                                </BubbleContent>
+                              </Bubble>
+                            ) : null}
+                          </MessageContent>
+                        </Message>
+                      </MessageScrollerItem>
+                    ))}
+                    {interim ? (
+                      <MessageScrollerItem messageId="interim">
+                        <Message align="end">
+                          <MessageContent>
+                            <Bubble align="end" variant="secondary">
+                              <BubbleContent>{interim}</BubbleContent>
+                            </Bubble>
+                          </MessageContent>
+                        </Message>
+                      </MessageScrollerItem>
+                    ) : null}
+                    {status === "thinking" ? (
+                      <MessageScrollerItem messageId="thinking">
+                        <Message align="start">
+                          <MessageContent>
+                            <Bubble align="start" variant="muted">
+                              <BubbleContent>
+                                <span className="shimmer">Nag-iisip…</span>
+                              </BubbleContent>
+                            </Bubble>
+                          </MessageContent>
+                        </Message>
+                      </MessageScrollerItem>
+                    ) : null}
+                    {error ? (
+                      <MessageScrollerItem messageId="error">
+                        <Message align="start">
+                          <MessageContent>
+                            <Bubble align="start" variant="destructive">
+                              <BubbleContent>{error}</BubbleContent>
+                            </Bubble>
+                          </MessageContent>
+                        </Message>
+                      </MessageScrollerItem>
+                    ) : null}
+                  </MessageScrollerContent>
+                </MessageScrollerViewport>
+                <MessageScrollerButton />
+              </MessageScroller>
+            </MessageScrollerProvider>
           </div>
 
-          <div className="border-t px-6 py-4">
-            <div className="flex items-center gap-3">
-              <Button
-                size="icon-lg"
-                onClick={toggleMic}
-                disabled={busy}
-                className={cn("size-16 rounded-full", status === "listening" && "bg-destructive hover:bg-destructive/80")}
-              >
-                {status === "listening" ? <Square /> : <Mic />}
-              </Button>
-              <label
-                className={cn(buttonVariants({ size: "icon-lg" }), "size-16 cursor-pointer rounded-full")}
-                title="Scan with camera"
-              >
-                <Camera />
-                <input
-                  type="file"
-                  accept="image/*"
-                  capture="environment"
-                  className="hidden"
-                  onChange={onFile}
-                />
-              </label>
-              <label
-                className={cn(buttonVariants({ variant: "outline", size: "icon-lg" }), "cursor-pointer")}
-                title="Upload an image"
-              >
-                <ImageUp />
-                <input type="file" accept="image/*" className="hidden" onChange={onFile} />
-              </label>
-              <div className="flex-1">
-                <Textarea
-                  value={textInput}
-                  onChange={(e) => setTextInput(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && !e.shiftKey) {
-                      e.preventDefault();
-                      void sendTurn(textInput);
-                      setTextInput("");
-                    }
-                  }}
-                  placeholder="O mag-type ng tanong…"
-                  className="min-h-11"
-                />
-              </div>
-              <Button
-                variant="outline"
-                onClick={() => {
-                  void sendTurn(textInput);
-                  setTextInput("");
+          <div className="border-t p-4">
+            <div className="rounded-2xl border bg-background p-2 transition-shadow focus-within:ring-2 focus-within:ring-ring/30">
+              <Textarea
+                value={textInput}
+                onChange={(e) => setTextInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    void sendTurn(textInput);
+                    setTextInput("");
+                  }
                 }}
-                disabled={busy || !textInput.trim()}
-              >
-                Send
-              </Button>
+                placeholder="Type a question, or attach a photo of the worksheet…"
+                className="min-h-16 resize-none border-0 bg-transparent shadow-none focus-visible:ring-0 dark:bg-transparent"
+              />
+              <div className="flex items-center justify-between gap-2 pt-1">
+                <div className="flex items-center gap-1">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => uploadInputRef.current?.click()}
+                    disabled={busy || scanning}
+                    title="Attach an image"
+                  >
+                    <ImageUp />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => cameraInputRef.current?.click()}
+                    disabled={busy || scanning}
+                    title="Take a photo"
+                  >
+                    <Camera />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => {
+                      void toggleMic();
+                    }}
+                    disabled={busy || scanning}
+                    title={status === "listening" ? "Stop listening" : "Speak"}
+                    className={cn(
+                      status === "listening" && "bg-destructive/10 text-destructive hover:bg-destructive/20",
+                    )}
+                  >
+                    {status === "listening" ? <Square /> : <Mic />}
+                  </Button>
+                </div>
+                <Button
+                  size="icon"
+                  onClick={() => {
+                    void sendTurn(textInput);
+                    setTextInput("");
+                  }}
+                  disabled={busy || scanning || !textInput.trim()}
+                  title="Send"
+                >
+                  <ArrowUp />
+                </Button>
+              </div>
             </div>
-            <p className="mt-3 font-mono text-xs text-muted-foreground">
+            <p className="mt-2 font-mono text-xs text-muted-foreground">
               {status === "listening"
                 ? "Nakikinig… magsalita ngayon."
-                : "Tap the mic and talk, or scan the page."}
+                : "Attach a photo of the worksheet, tap the mic, or type."}
             </p>
+            <input
+              ref={cameraInputRef}
+              type="file"
+              accept="image/*"
+              capture="environment"
+              className="hidden"
+              onChange={onFile}
+            />
+            <input
+              ref={uploadInputRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={onFile}
+            />
           </div>
         </section>
-
-        <aside className="flex flex-col gap-6 px-6 py-6">
-          <div>
-            <h2 className="font-mono text-xs uppercase tracking-widest text-muted-foreground">
-              Minutes
-            </h2>
-            {minutes ? (
-              <div className="mt-3 space-y-3">
-                <div>
-                  <div className="flex justify-between text-sm">
-                    <span>This session</span>
-                    <span className="font-mono">
-                      {minutes.sessionMin.toFixed(1)} / {minutes.sessionCap}
-                    </span>
-                  </div>
-                  <div className="mt-1 h-1.5 w-full rounded-full bg-muted">
-                    <div
-                      className="h-1.5 rounded-full bg-primary"
-                      style={{
-                        width: `${Math.min(100, (minutes.sessionMin / minutes.sessionCap) * 100)}%`,
-                      }}
-                    />
-                  </div>
-                </div>
-                <div className="flex justify-between text-xs text-muted-foreground">
-                  <span>This week</span>
-                  <span className="font-mono">
-                    {minutes.learnerWeekMin.toFixed(1)} / {minutes.learnerWeekCap}
-                  </span>
-                </div>
-                <div className="flex justify-between text-xs text-muted-foreground">
-                  <span>Class today</span>
-                  <span className="font-mono">
-                    {minutes.classDayMin.toFixed(1)} min · ₱{minutes.classDayCostPhp.toFixed(2)}
-                  </span>
-                </div>
-              </div>
-            ) : null}
-          </div>
-
-          <div>
-            <h2 className="font-mono text-xs uppercase tracking-widest text-muted-foreground">
-              Page context
-            </h2>
-            {pageText ? (
-              <div className="mt-3 space-y-2">
-                <p className="text-xs text-muted-foreground">{pageText}</p>
-                {scanItems.map((item) => (
-                  <p key={item.number} className="font-mono text-xs">
-                    {item.number}. {item.text}
-                  </p>
-                ))}
-              </div>
-            ) : scanning ? (
-              <p className="shimmer mt-3 text-xs">Binabasa ang pahina…</p>
-            ) : (
-              <p className="mt-3 text-xs text-muted-foreground">
-                Scan or upload a page and the tutor will teach from it.
-              </p>
-            )}
-          </div>
-
-          <div>
-            <h2 className="font-mono text-xs uppercase tracking-widest text-muted-foreground">
-              Method
-            </h2>
-            <p className="mt-3 text-xs text-muted-foreground">
-              One step per turn. The tutor asks the learner for the next step, and never hands over
-              the final answer.
-            </p>
-          </div>
-        </aside>
       </div>
     </div>
   );

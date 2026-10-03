@@ -12,10 +12,14 @@ export interface TtsResult {
 /** Cache by sha256(text + voice + model) — the single biggest cost lever (spec 04, §5). */
 const audioCache = new Map<string, { audioBase64: string; mime: string }>();
 
-function voiceFor(homeLang: string): { voiceId: string | undefined; model: string } | null {
+/** Fallback voice id so TTS works with just an API key (overridable per language). */
+const FALLBACK_VOICE = process.env.ELEVENLABS_DEFAULT_VOICE ?? "Xb7hH8MSUJpSbSDYk0k2"; // Alice — Clear, Engaging Educator (premade)
+
+function voiceFor(homeLang: string): { voiceId: string; model: string } | null {
   const lang = getLanguage(homeLang);
   if (lang.voice.provider !== "elevenlabs") return null;
-  return { voiceId: process.env[lang.voice.voiceEnv], model: lang.voice.model };
+  const voiceId = process.env[lang.voice.voiceEnv] || FALLBACK_VOICE;
+  return { voiceId, model: lang.voice.model };
 }
 
 export async function synthesize(text: string, homeLang: string): Promise<TtsResult | null> {

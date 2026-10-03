@@ -14,6 +14,8 @@ const BASE_URL = process.env.VISION_BASE_URL ?? "https://opencode.ai/zen/go/v1";
 const MODEL = process.env.VISION_MODEL ?? "deepseek-v4-flash-vision-exp";
 const USER_AGENT = process.env.OPENCODE_USER_AGENT ?? "tuklas/0.1.0";
 const MAX_TOKENS = Number(process.env.VISION_MAX_TOKENS) || 1500;
+/** Extraction is mechanical; skip the model's chain-of-thought to avoid empty output. */
+const REASONING_EFFORT = process.env.VISION_REASONING_EFFORT ?? "none";
 
 const VISION_PROMPT = `Extract ALL text from this page in reading order. Preserve numbers and equations exactly.
 Detect numbered items and return them as an array. Return JSON:
@@ -70,6 +72,7 @@ export async function extractPage(imageDataUrl: string, sessionId?: string): Pro
       model: MODEL,
       temperature: 0,
       max_tokens: MAX_TOKENS,
+      reasoning_effort: REASONING_EFFORT,
       messages: [
         { role: "system", content: VISION_PROMPT },
         {

@@ -61,7 +61,7 @@ export async function POST(request: Request) {
     session.id,
   );
 
-  const filtered = enforceHintPolicy(llm.text, Boolean(session.pageContext));
+  const filtered = enforceHintPolicy(llm.text, session.homeLang);
   addTurn(session.id, {
     speaker: "tutor",
     text: filtered.text,

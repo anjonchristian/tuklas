@@ -18,22 +18,24 @@ const MODEL = process.env.LLM_MODEL ?? "deepseek-v4.1-flash";
 /** OpenCode Go requires clients to identify themselves with a non-generic user agent. */
 const USER_AGENT = process.env.OPENCODE_USER_AGENT ?? "tuklas/0.1.0";
 const MAX_TOKENS = Number(process.env.LLM_MAX_TOKENS) || 1500;
+/** The tutor only needs a one-line reply; disable the model's chain-of-thought. */
+const REASONING_EFFORT = process.env.LLM_REASONING_EFFORT ?? "none";
 
 /** Demo replies that still follow the teaching method (one step + a question back). */
 const MOCK_REPLIES: Record<string, string[]> = {
   fil: [
-    "Sige, tulungan kita. Unang hakbang: dagdagin natin ang 3 at 4, kaya 7. Ano sa tingin mo ang susunod nating gawin?",
-    "Magaling! Ngayon, tingnan natin ang bawas. Ilan ang natitira kapag kinuha natin ang 2 sa 8?",
+    "Sige, tulungan kita. Ang tawag dito ay **addition** — dagdagin natin ang 4 sa 3. Ikaw naman, pila kaya lahat?",
+    "Magaling! Ito naman ay **subtraction** — kuhaan natin ang 2 sa 8. Ano kaya ang natitira?",
   ],
   ceb: [
-    "Sige, tabangan tika. Unang lakang: idugang nato ang 3 ug 4, so 7. Unsa sa imong hunahuna ang sunod natong buhaton?",
-    "Maayo! Karon, tan-awon nato ang kuhaan. Pila ang mahabilin kung kuhaon nato ang 2 sa 8?",
+    "Sige, tabangan tika. Ang tawag ani mao ang **addition** — idugang nato ang 4 sa 3. Ikaw naman, pila kaha tanan?",
+    "Maayo! Kini mao ang **subtraction** — kuhaon nato ang 2 sa 8. Pila kaha ang mahabilin?",
   ],
   ilo: [
-    "Sige, tulungan ka. Umuna nga addang: inayon tayo ti 3 ken 4, isu a 7. Ania ti pagarupem a sumaruno?",
+    "Sige, tulungan ka. Ti maawagan daytoy ket **addition** — inayon tayo ti 4 iti 3. Sika naman, mano kadi amin?",
   ],
   war: [
-    "Sige, buligan tika. Una nga tikang: dugangon naton an 3 ngan 4, salit 7. Ano sa imo hunahuna an sunod?",
+    "Sige, buligan tika. An tawag hini amo an **addition** — dugangon naton an 4 ha 3. Ikaw naman, pira ba ngatanan?",
   ],
 };
 
@@ -72,7 +74,13 @@ export async function chatComplete(
       "User-Agent": USER_AGENT,
       "x-opencode-session": conversation,
     },
-    body: JSON.stringify({ model: MODEL, messages, temperature: 0.4, max_tokens: MAX_TOKENS }),
+    body: JSON.stringify({
+      model: MODEL,
+      messages,
+      temperature: 0.4,
+      max_tokens: MAX_TOKENS,
+      reasoning_effort: REASONING_EFFORT,
+    }),
   });
 
   if (!res.ok) {
