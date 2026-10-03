@@ -202,3 +202,10 @@ plan/       Build specs (product, session, multimodal input, cost, architecture)
 
 - **Deck:** [`pitch/index.html`](pitch/index.html) — open in a browser (arrow keys / click).
 - **Speaker notes & 2-minute script:** [`pitch/deck.md`](pitch/deck.md).
+
+## Team
+
+- **Anjon Christian M. Paderez** — Team Representative
+- **Rob Godwin B. Raymundo**
+- **Francis Luiji R. Llanto**
+- **Jamey Felisha Arguelles**
