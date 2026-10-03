@@ -12,6 +12,12 @@ services:
     envVars:
       - key: DATABASE_URL
         sync: false
+      - key: SUPABASE_URL
+        value: https://jnfegvodjkqsqectopfb.supabase.co
+      - key: SUPABASE_PUBLISHABLE_KEY
+        value: sb_publishable_EnaZt-_3dsq-D4_B_mdbUA_3bHbOxzQ
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
       - key: OPENCODE_API_KEY
         sync: false
       - key: ELEVENLABS_API_KEY

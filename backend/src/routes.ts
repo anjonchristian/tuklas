@@ -3,7 +3,7 @@ import { z } from "zod";
 import { env } from "./env";
 import { getLanguage } from "./languages";
 import { chatComplete, extractPage, synthesize, type ChatMessage } from "./providers";
-import { buildGradePrompt, buildGreeting, buildSystemPrompt, enforceHintPolicy, parseGradeJson, type GradeResult } from "./tutor";
+import { buildClassScriptPrompt, buildGradePrompt, buildGreeting, buildParentNotePrompt, buildSystemPrompt, enforceHintPolicy, parseGradeJson, type GradeResult } from "./tutor";
 import { makeRepo, type Repo } from "./store";
 
 const repo: Repo = makeRepo();
@@ -13,12 +13,21 @@ function sessionMinutes(startedAt: Date, endedAt: Date | null) {
   return Math.min((end - startedAt.getTime()) / 60000, env.caps.minutesPerSession);
 }
 
+/** Last number in a string — used to compare a child's answer to the expected value. */
+function extractNumber(text: string): number | null {
+  const matches = text.match(/-?\d+(?:[.,]\d+)?/g);
+  if (!matches || matches.length === 0) return null;
+  const n = Number(matches[matches.length - 1].replace(",", "."));
+  return Number.isFinite(n) ? n : null;
+}
+
 export const router = Router();
 
 router.get("/health", (_req, res) => {
   res.json({
     ok: true,
     database: env.databaseUrl ? "postgres" : "memory",
+    supabase: env.supabaseUrl ? "configured" : "none",
     providers: {
       llm: env.opencodeApiKey ? "opencode-go" : "mock",
       tts: env.elevenLabsKey ? "elevenlabs" : "browser-fallback",
@@ -77,7 +86,7 @@ router.post("/api/tutor/start", async (req, res) => {
   const reteach = await repo.dueErrors(profileId, 3);
   let greeting = buildGreeting(homeLang, topic);
   if (reteach.length > 0) {
-    greeting = `${greeting} Balikan natin ang dati nimong lisod: ${reteach[0].skill}.`;
+    greeting = `${greeting} Balikan natin: ${reteach[0].problem ?? reteach[0].skill}.`;
   }
   await repo.addTurn({ sessionId: session.id, speaker: "tutor", text: greeting, lang: homeLang, flagged: false });
 
@@ -117,7 +126,7 @@ router.post("/api/tutor/turn", async (req, res) => {
     subject: session.subject,
     topic: session.topic,
     pageContext: session.pageContext ?? undefined,
-    reteach: reteach.map((e) => ({ skill: e.skill, wrongAnswer: e.wrongAnswer })),
+    reteach: reteach.map((e) => ({ skill: e.skill, wrongAnswer: e.wrongAnswer, problem: e.problem })),
   });
 
   const lastTutor = [...history].reverse().find((t) => t.speaker === "tutor")?.text;
@@ -133,6 +142,7 @@ router.post("/api/tutor/turn", async (req, res) => {
             level: session.level,
             pageContext: session.pageContext ?? undefined,
             tutorPrompt: lastTutor,
+            focusProblem: reteach.find((e) => e.problem)?.problem ?? undefined,
             answer: text,
           }),
         },
@@ -143,6 +153,13 @@ router.post("/api/tutor/turn", async (req, res) => {
     grade = parseGradeJson(graded.text);
   } catch {
     // grading failure must not break the turn
+  }
+
+  // Numeric grading is deterministic: compare the child's number to the grader's expected value.
+  const answerNum = extractNumber(text);
+  const expectedNum = extractNumber(grade.expected);
+  if (answerNum !== null && expectedNum !== null) {
+    grade = { ...grade, isAnswer: true, correct: answerNum === expectedNum };
   }
 
   // 2) Generate the tutoring reply, told whether the child was right or wrong.
@@ -179,6 +196,7 @@ router.post("/api/tutor/turn", async (req, res) => {
       skill: grade.skill,
       subject: session.subject,
       wrongAnswer: text,
+      problem: session.pageContext ?? lastTutor ?? null,
     });
   } else if (grade.isAnswer && grade.correct === true) {
     await repo.resolveError(session.profileId, grade.skill);
@@ -241,6 +259,94 @@ router.get("/api/notebook/:profileId", async (req, res) => {
   const errors = await repo.listOpenErrors(req.params.profileId);
   res.json({
     profileId: req.params.profileId,
-    openErrors: errors.map((e) => ({ skill: e.skill, subject: e.subject, attempts: e.attempts, lastSeenAt: e.lastSeenAt })),
+    openErrors: errors.map((e) => ({
+      skill: e.skill,
+      subject: e.subject,
+      attempts: e.attempts,
+      intervalDays: e.intervalDays,
+      nextDueAt: e.nextDueAt,
+      lastSeenAt: e.lastSeenAt,
+    })),
   });
+});
+
+// ── History & resume ───────────────────────────────────────────────────────
+router.get("/api/history/:profileId", async (req, res) => {
+  const sessions = await repo.listSessions(req.params.profileId, 20);
+  res.json({
+    profileId: req.params.profileId,
+    sessions: sessions.map((s) => ({
+      id: s.id,
+      subject: s.subject,
+      topic: s.topic,
+      homeLang: s.homeLang,
+      minutes: s.minutesUsed,
+      state: s.state,
+      startedAt: s.startedAt,
+      endedAt: s.endedAt,
+    })),
+  });
+});
+
+router.get("/api/session/:sessionId", async (req, res) => {
+  const session = await repo.getSession(req.params.sessionId);
+  if (!session) return res.status(404).json({ error: "Unknown session" });
+  const turns = await repo.recentTurns(req.params.sessionId, 200);
+  res.json({
+    session: {
+      id: session.id,
+      subject: session.subject,
+      topic: session.topic,
+      homeLang: session.homeLang,
+      startedAt: session.startedAt,
+      endedAt: session.endedAt,
+      state: session.state,
+    },
+    turns: turns.map((t) => ({ speaker: t.speaker, text: t.text, createdAt: t.createdAt })),
+  });
+});
+
+// ── Outputs for home and class ─────────────────────────────────────────────
+router.post("/api/parent-note", async (req, res) => {
+  const schema = z.object({ profileId: z.string().min(1) });
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "Invalid body" });
+  const profile = await repo.getProfile(parsed.data.profileId);
+  const skills = (await repo.listOpenErrors(parsed.data.profileId)).map((e) => e.skill);
+  const homeLang = profile?.homeLang ?? "fil";
+  const prompt = buildParentNotePrompt({
+    homeLang,
+    childName: profile?.nickname,
+    skills,
+    level: profile?.level ?? 1,
+  });
+  const completion = await chatComplete(
+    [{ role: "system", content: prompt }, { role: "user", content: "Write the note now." }],
+    `parent-${parsed.data.profileId}`,
+  );
+  const text =
+    completion.text.trim() || "Kumustahin ang bata at tanungin kung ano ang pinag-aralan ngayong araw.";
+  let audio: { base64: string; mime: string } | null = null;
+  try {
+    const tts = await synthesize(text, homeLang);
+    if (tts) audio = { base64: tts.audioBase64, mime: tts.mime };
+  } catch {
+    audio = null;
+  }
+  res.json({ text, skills, lang: homeLang, audio });
+});
+
+router.post("/api/class-script", async (req, res) => {
+  const schema = z.object({ profileId: z.string().min(1) });
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "Invalid body" });
+  const profile = await repo.getProfile(parsed.data.profileId);
+  const skills = (await repo.listOpenErrors(parsed.data.profileId)).map((e) => e.skill);
+  const homeLang = profile?.homeLang ?? "fil";
+  const prompt = buildClassScriptPrompt({ homeLang, skills, level: profile?.level ?? 1 });
+  const completion = await chatComplete(
+    [{ role: "system", content: prompt }, { role: "user", content: "Write the three sentences now." }],
+    `class-${parsed.data.profileId}`,
+  );
+  res.json({ text: completion.text.trim(), skills, lang: homeLang });
 });

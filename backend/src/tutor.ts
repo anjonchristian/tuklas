@@ -14,7 +14,7 @@ export interface PromptParams {
   subject: string;
   topic: string;
   pageContext?: string;
-  reteach?: { skill: string; wrongAnswer?: string | null }[];
+  reteach?: { skill: string; wrongAnswer?: string | null; problem?: string | null }[];
 }
 
 /**
@@ -60,7 +60,12 @@ export function buildSystemPrompt(params: PromptParams): string {
       ``,
       `The learner previously got these skills wrong (your Error Notebook). If they have no page in`,
       `front of them, silently re-teach the OLDEST one first, one step at a time:`,
-      ...params.reteach.map((e, i) => `  ${i + 1}. ${e.skill}${e.wrongAnswer ? ` (they answered "${e.wrongAnswer}")` : ""}`),
+      ...params.reteach.map(
+        (e, i) =>
+          `  ${i + 1}. ${e.skill}${e.problem ? ` — problem: ${e.problem}` : ""}${
+            e.wrongAnswer ? ` (they answered "${e.wrongAnswer}")` : ""
+          }`,
+      ),
     );
   }
 
@@ -84,6 +89,38 @@ export function buildGreeting(homeLang: string, topic: string): string {
   return greetings[lang.code] ?? greetings.fil;
 }
 
+/** A short note to the parent, in the home language, on what to ask at home. */
+export function buildParentNotePrompt(params: {
+  homeLang: string;
+  childName?: string;
+  skills: string[];
+  level: number;
+}): string {
+  const lang = getLanguage(params.homeLang);
+  return [
+    `You write a short note from an AI tutor to a parent in the Philippines.`,
+    `Child: ${params.childName ?? "your child"} (Grade ${params.level}).`,
+    params.skills.length
+      ? `Skills the child is still learning: ${params.skills.join(", ")}.`
+      : `The child is doing well; pick one recent topic to review.`,
+    ``,
+    `Write 2-3 short sentences, in ${lang.label}, telling the parent exactly what to ask at home`,
+    `and how — a concrete question using everyday objects. Warm and plain: no jargon, no grades, no shaming.`,
+    `Plain text only, no markdown.`,
+  ].join("\n");
+}
+
+/** Three sentences the child can say in class tomorrow to ask for help. */
+export function buildClassScriptPrompt(params: { homeLang: string; skills: string[]; level: number }): string {
+  const lang = getLanguage(params.homeLang);
+  return [
+    `Write THREE short sentences a Grade ${params.level} child can say in class tomorrow, in ${lang.label},`,
+    `to ask their teacher for help.`,
+    params.skills.length ? `Focus on: ${params.skills.join(", ")}.` : `Pick a common math or reading skill.`,
+    `Plain, polite, encouraging. Return only the three sentences, no markdown.`,
+  ].join("\n");
+}
+
 export interface GradeResult {
   isAnswer: boolean;
   correct: boolean | null;
@@ -96,13 +133,15 @@ export function buildGradePrompt(params: {
   level: number;
   pageContext?: string;
   tutorPrompt?: string;
+  focusProblem?: string;
   answer: string;
 }): string {
   return [
     `You are grading a Grade ${params.level} learner in the Philippines.`,
     params.pageContext
       ? `The page the learner is working on: ${params.pageContext}`
-      : `No page is open; grade against the tutor's question.`,
+      : `No page is open; grade against the problem or the tutor's question.`,
+    params.focusProblem ? `Problem in focus (from an earlier mistake): ${params.focusProblem}` : ``,
     params.tutorPrompt ? `The tutor just said: ${params.tutorPrompt}` : ``,
     `The learner said: "${params.answer}"`,
     ``,

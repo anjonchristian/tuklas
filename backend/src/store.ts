@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { and, asc, desc, eq, gte, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, lte, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
-import { boolean, doublePrecision, index, integer, pgTable, text, timestamp } from "drizzle-orm/pg-core";
+import { boolean, doublePrecision, index, integer, pgTable, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
 import postgres from "postgres";
 import { env } from "./env";
 
@@ -57,12 +57,18 @@ export const errorEvents = pgTable(
     subject: text("subject").notNull(),
     status: text("status").notNull().default("open"), // open | resolved
     attempts: integer("attempts").notNull().default(1),
+    intervalDays: integer("interval_days").notNull().default(0),
+    problem: text("problem"),
     wrongAnswer: text("wrong_answer"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).defaultNow().notNull(),
+    nextDueAt: timestamp("next_due_at", { withTimezone: true }).defaultNow().notNull(),
     resolvedAt: timestamp("resolved_at", { withTimezone: true }),
   },
-  (t) => ({ byProfile: index("error_events_profile").on(t.profileId, t.status) }),
+  (t) => ({
+    byProfile: index("error_events_profile").on(t.profileId, t.status),
+    uniqueSkill: uniqueIndex("error_events_profile_skill").on(t.profileId, t.skill),
+  }),
 );
 
 // ── Types ───────────────────────────────────────────────────────────────────
@@ -104,9 +110,12 @@ export interface ErrorRow {
   subject: string;
   status: string;
   attempts: number;
+  intervalDays: number;
+  problem: string | null;
   wrongAnswer: string | null;
   createdAt: Date;
   lastSeenAt: Date;
+  nextDueAt: Date;
   resolvedAt: Date | null;
 }
 
@@ -121,10 +130,17 @@ export interface Repo {
   recentTurns(sessionId: string, limit: number): Promise<TurnRow[]>;
   sessionsToday(profileId: string): Promise<number>;
   minutesThisWeek(profileId: string): Promise<number>;
-  /** Oldest open errors first — the spaced re-teach queue. */
+  /** Errors whose next_due_at has passed — the spaced re-teach queue. */
   dueErrors(profileId: string, limit: number): Promise<ErrorRow[]>;
   listOpenErrors(profileId: string): Promise<ErrorRow[]>;
-  recordError(e: { profileId: string; skill: string; subject: string; wrongAnswer?: string | null }): Promise<void>;
+  listSessions(profileId: string, limit: number): Promise<SessionRow[]>;
+  recordError(e: {
+    profileId: string;
+    skill: string;
+    subject: string;
+    wrongAnswer?: string | null;
+    problem?: string | null;
+  }): Promise<void>;
   resolveError(profileId: string, skill: string): Promise<void>;
 }
 
@@ -134,6 +150,12 @@ function startOfToday(): Date {
   const d = new Date();
   d.setHours(0, 0, 0, 0);
   return d;
+}
+
+/** Spaced-repetition ladder, in days: 1 → 3 → 7 → 14 → 30. */
+const REVIEW_LADDER = [1, 3, 7, 14, 30];
+function nextInterval(prev: number): number {
+  return REVIEW_LADDER.find((v) => v > prev) ?? REVIEW_LADDER[REVIEW_LADDER.length - 1];
 }
 
 // ── In-memory repo (local dev, no DATABASE_URL) ─────────────────────────────
@@ -200,9 +222,10 @@ class MemoryRepo implements Repo {
       .reduce((sum, s) => sum + s.minutesUsed, 0);
   }
   async dueErrors(profileId: string, limit: number) {
+    const now = Date.now();
     return [...this.errors.values()]
-      .filter((e) => e.profileId === profileId && e.status === "open")
-      .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
+      .filter((e) => e.profileId === profileId && e.nextDueAt.getTime() <= now)
+      .sort((a, b) => a.nextDueAt.getTime() - b.nextDueAt.getTime())
       .slice(0, limit);
   }
   async listOpenErrors(profileId: string) {
@@ -210,14 +233,24 @@ class MemoryRepo implements Repo {
       .filter((e) => e.profileId === profileId && e.status === "open")
       .sort((a, b) => b.lastSeenAt.getTime() - a.lastSeenAt.getTime());
   }
-  async recordError(e: { profileId: string; skill: string; subject: string; wrongAnswer?: string | null }) {
+  async recordError(e: {
+    profileId: string;
+    skill: string;
+    subject: string;
+    wrongAnswer?: string | null;
+    problem?: string | null;
+  }) {
     const k = this.key(e.profileId, e.skill);
+    const now = new Date();
     const existing = this.errors.get(k);
     if (existing) {
       existing.attempts += 1;
       existing.status = "open";
-      existing.lastSeenAt = new Date();
+      existing.intervalDays = 0;
+      existing.lastSeenAt = now;
+      existing.nextDueAt = now;
       existing.wrongAnswer = e.wrongAnswer ?? existing.wrongAnswer;
+      existing.problem = e.problem ?? existing.problem;
     } else {
       this.errors.set(k, {
         id: id("err"),
@@ -226,9 +259,12 @@ class MemoryRepo implements Repo {
         subject: e.subject,
         status: "open",
         attempts: 1,
+        intervalDays: 0,
+        problem: e.problem ?? null,
         wrongAnswer: e.wrongAnswer ?? null,
-        createdAt: new Date(),
-        lastSeenAt: new Date(),
+        createdAt: now,
+        lastSeenAt: now,
+        nextDueAt: now,
         resolvedAt: null,
       });
     }
@@ -236,9 +272,18 @@ class MemoryRepo implements Repo {
   async resolveError(profileId: string, skill: string) {
     const e = this.errors.get(this.key(profileId, skill));
     if (e) {
+      const interval = nextInterval(e.intervalDays);
       e.status = "resolved";
+      e.intervalDays = interval;
       e.resolvedAt = new Date();
+      e.nextDueAt = new Date(Date.now() + interval * 24 * 60 * 60 * 1000);
     }
+  }
+  async listSessions(profileId: string, limit: number) {
+    return [...this.sessions.values()]
+      .filter((s) => s.profileId === profileId)
+      .sort((a, b) => b.startedAt.getTime() - a.startedAt.getTime())
+      .slice(0, limit);
   }
 }
 
@@ -304,8 +349,8 @@ class DrizzleRepo implements Repo {
     const rows = await this.db
       .select()
       .from(errorEvents)
-      .where(and(eq(errorEvents.profileId, profileId), eq(errorEvents.status, "open")))
-      .orderBy(asc(errorEvents.createdAt))
+      .where(and(eq(errorEvents.profileId, profileId), lte(errorEvents.nextDueAt, new Date())))
+      .orderBy(asc(errorEvents.nextDueAt))
       .limit(limit);
     return rows as ErrorRow[];
   }
@@ -317,7 +362,22 @@ class DrizzleRepo implements Repo {
       .orderBy(desc(errorEvents.lastSeenAt));
     return rows as ErrorRow[];
   }
-  async recordError(e: { profileId: string; skill: string; subject: string; wrongAnswer?: string | null }) {
+  async listSessions(profileId: string, limit: number) {
+    const rows = await this.db
+      .select()
+      .from(sessions)
+      .where(eq(sessions.profileId, profileId))
+      .orderBy(desc(sessions.startedAt))
+      .limit(limit);
+    return rows as SessionRow[];
+  }
+  async recordError(e: {
+    profileId: string;
+    skill: string;
+    subject: string;
+    wrongAnswer?: string | null;
+    problem?: string | null;
+  }) {
     await this.db
       .insert(errorEvents)
       .values({
@@ -325,19 +385,38 @@ class DrizzleRepo implements Repo {
         profileId: e.profileId,
         skill: e.skill,
         subject: e.subject,
+        problem: e.problem ?? null,
         wrongAnswer: e.wrongAnswer ?? null,
       })
-      .onConflictDoNothing();
-    // Bump attempts / reopen if a row for this skill already exists.
-    await this.db
-      .update(errorEvents)
-      .set({ status: "open", lastSeenAt: new Date(), attempts: sql`${errorEvents.attempts} + 1` })
-      .where(and(eq(errorEvents.profileId, e.profileId), eq(errorEvents.skill, e.skill)));
+      .onConflictDoUpdate({
+        target: [errorEvents.profileId, errorEvents.skill],
+        set: {
+          status: "open",
+          lastSeenAt: new Date(),
+          nextDueAt: new Date(),
+          intervalDays: 0,
+          attempts: sql`${errorEvents.attempts} + 1`,
+          problem: e.problem ?? null,
+          wrongAnswer: e.wrongAnswer ?? null,
+        },
+      });
   }
   async resolveError(profileId: string, skill: string) {
+    const [row] = await this.db
+      .select()
+      .from(errorEvents)
+      .where(and(eq(errorEvents.profileId, profileId), eq(errorEvents.skill, skill)))
+      .limit(1);
+    if (!row) return;
+    const interval = nextInterval((row as ErrorRow).intervalDays);
     await this.db
       .update(errorEvents)
-      .set({ status: "resolved", resolvedAt: new Date() })
+      .set({
+        status: "resolved",
+        intervalDays: interval,
+        resolvedAt: new Date(),
+        nextDueAt: new Date(Date.now() + interval * 24 * 60 * 60 * 1000),
+      })
       .where(and(eq(errorEvents.profileId, profileId), eq(errorEvents.skill, skill)));
   }
 }

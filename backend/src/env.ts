@@ -10,6 +10,11 @@ export const env = {
   databaseUrl: process.env.DATABASE_URL ?? "",
   corsOrigin: process.env.CORS_ORIGIN ?? "*",
 
+  // Supabase (project: tulay, ap-southeast-1)
+  supabaseUrl: process.env.SUPABASE_URL ?? "",
+  supabasePublishableKey: process.env.SUPABASE_PUBLISHABLE_KEY ?? "",
+  supabaseServiceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY ?? "",
+
   opencodeApiKey: process.env.OPENCODE_API_KEY ?? process.env.LLM_API_KEY ?? "",
   llmBaseUrl: process.env.LLM_PROVIDER_URL ?? "https://opencode.ai/zen/go/v1",
   llmModel: process.env.LLM_MODEL ?? "deepseek-v4.1-flash",

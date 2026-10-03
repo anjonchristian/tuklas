@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, useState, type ChangeEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type ChangeEvent } from "react";
 import Link from "next/link";
 import { ArrowLeft, ArrowUp, Camera, ImageUp, Mic, Square } from "lucide-react";
 import { Attachment, AttachmentMedia } from "@/components/ui/attachment";
@@ -28,7 +28,7 @@ import {
 } from "@/components/ui/message-scroller";
 import { Textarea } from "@/components/ui/textarea";
 import { LANGUAGES, LANGUAGE_CODES, type LangCode } from "@/lib/tutor/languages";
-import { apiUrl } from "@/lib/api";
+import { apiGet, apiPost, apiUrl } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 interface SpeechAlternative {
@@ -80,6 +80,23 @@ interface Minutes {
   learnerWeekCap: number;
   classDayMin: number;
   classDayCostPhp: number;
+}
+
+interface NotebookError {
+  skill: string;
+  subject: string;
+  attempts: number;
+  intervalDays: number;
+  nextDueAt: string;
+}
+
+interface HistorySession {
+  id: string;
+  subject: string;
+  topic: string;
+  state: string;
+  minutes: number;
+  startedAt: string;
 }
 
 function getAncestorSpeechCtor(): (new () => SpeechRecognitionLike) | undefined {
@@ -175,11 +192,39 @@ export default function TutorPage() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [scanning, setScanning] = useState(false);
+  const [notebook, setNotebook] = useState<NotebookError[]>([]);
+  const [history, setHistory] = useState<HistorySession[]>([]);
+  const [note, setNote] = useState<string | null>(null);
+  const [noteBusy, setNoteBusy] = useState(false);
 
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const profileIdRef = useRef<string>("");
   const cameraInputRef = useRef<HTMLInputElement | null>(null);
   const uploadInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Load the child's Error Notebook and past sessions so memory is visible on return.
+  useEffect(() => {
+    const profile = readProfile();
+    profileIdRef.current = profile.id;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const [nb, hist] = await Promise.all([
+          apiGet<{ openErrors: NotebookError[] }>(`/api/notebook/${profile.id}`),
+          apiGet<{ sessions: HistorySession[] }>(`/api/history/${profile.id}`),
+        ]);
+        if (!cancelled) {
+          setNotebook(nb.openErrors ?? []);
+          setHistory(hist.sessions ?? []);
+        }
+      } catch {
+        // backend not reachable yet; the tutor still works once it is
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const playReply = useCallback(
     (text: string, audio: { base64: string; mime: string } | null) => {
@@ -202,6 +247,22 @@ export default function TutorPage() {
     },
     [homeLang],
   );
+
+  const getParentNote = useCallback(async () => {
+    setNoteBusy(true);
+    try {
+      const data = await apiPost<{ text: string; audio: { base64: string; mime: string } | null }>(
+        "/api/parent-note",
+        { profileId: profileIdRef.current },
+      );
+      setNote(data.text);
+      playReply(data.text, data.audio);
+    } catch {
+      setNote("Hindi makuha ang note. Subukan ulit.");
+    } finally {
+      setNoteBusy(false);
+    }
+  }, [playReply]);
 
   const sendTurn = useCallback(
     async (text: string, image?: string) => {
@@ -425,6 +486,43 @@ export default function TutorPage() {
         <Link href="/" className="flex items-center gap-2 font-mono text-xs text-muted-foreground">
           <ArrowLeft className="size-3.5" /> Tuklas
         </Link>
+
+        {history.length > 0 || notebook.length > 0 ? (
+          <div className="mt-6 flex flex-col gap-4 rounded-xl border bg-muted/40 p-4">
+            <div>
+              <p className="font-mono text-xs tracking-widest text-muted-foreground uppercase">
+                Welcome back
+              </p>
+              <p className="mt-2 text-sm">
+                {notebook.length > 0
+                  ? `We still need to fix: ${notebook.map((e) => e.skill).join(", ")}.`
+                  : "You're all caught up — no open skills."}
+              </p>
+            </div>
+            {history.length > 0 ? (
+              <div className="flex flex-col gap-1">
+                <p className="font-mono text-xs tracking-widest text-muted-foreground uppercase">
+                  Recent lessons
+                </p>
+                {history.slice(0, 3).map((s) => (
+                  <p key={s.id} className="text-xs text-muted-foreground">
+                    {s.subject} · {s.topic} · {new Date(s.startedAt).toLocaleDateString()}
+                  </p>
+                ))}
+              </div>
+            ) : null}
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => void getParentNote()}
+              disabled={noteBusy}
+              className="w-fit"
+            >
+              {noteBusy ? "Writing…" : "Note for home"}
+            </Button>
+            {note ? <p className="text-sm">{note}</p> : null}
+          </div>
+        ) : null}
 
         <div className="mt-8 flex items-center gap-2">
           {[0, 1, 2].map((index) => (
