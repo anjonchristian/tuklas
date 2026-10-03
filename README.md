@@ -9,6 +9,32 @@
   It teaches from the worksheet in the child's hand — one step at a time — and remembers what they got wrong.
 </p>
 
+<p align="center">
+  <a href="https://tuklas.tnf-ex.tech/"><strong>tuklas.tnf-ex.tech</strong></a>
+</p>
+
+<p align="center">
+  <a href="https://tuklas.tnf-ex.tech/"><img alt="Live" src="https://img.shields.io/badge/Live-tuklas.tnf--ex.tech-2E7D32?style=flat-square&amp;logo=googlechrome&amp;logoColor=white" /></a>
+  <img alt="Next.js 16" src="https://img.shields.io/badge/Next.js_16-000000?style=flat-square&amp;logo=nextdotjs&amp;logoColor=white" />
+  <img alt="React 19" src="https://img.shields.io/badge/React_19-61DAFB?style=flat-square&amp;logo=react&amp;logoColor=black" />
+  <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-3178C6?style=flat-square&amp;logo=typescript&amp;logoColor=white" />
+  <img alt="Tailwind CSS v4" src="https://img.shields.io/badge/Tailwind_v4-06B6D4?style=flat-square&amp;logo=tailwindcss&amp;logoColor=white" />
+  <img alt="shadcn/ui" src="https://img.shields.io/badge/shadcn%2Fui-000000?style=flat-square" />
+  <br />
+  <img alt="Node.js 20+" src="https://img.shields.io/badge/Node_20+-5FA04E?style=flat-square&amp;logo=nodedotjs&amp;logoColor=white" />
+  <img alt="Express" src="https://img.shields.io/badge/Express-000000?style=flat-square&amp;logo=express&amp;logoColor=white" />
+  <img alt="Drizzle ORM" src="https://img.shields.io/badge/Drizzle_ORM-C5F74F?style=flat-square" />
+  <img alt="PostgreSQL" src="https://img.shields.io/badge/PostgreSQL-4169E1?style=flat-square&amp;logo=postgresql&amp;logoColor=white" />
+  <img alt="Supabase" src="https://img.shields.io/badge/Supabase-3FCF8E?style=flat-square&amp;logo=supabase&amp;logoColor=white" />
+  <br />
+  <img alt="ElevenLabs" src="https://img.shields.io/badge/ElevenLabs-000000?style=flat-square" />
+  <img alt="OpenCode Go" src="https://img.shields.io/badge/OpenCode_Go-DeepSeek_V4.1-6E56CF?style=flat-square" />
+  <img alt="Docker" src="https://img.shields.io/badge/Docker-2496ED?style=flat-square&amp;logo=docker&amp;logoColor=white" />
+  <img alt="GitHub Actions" src="https://img.shields.io/badge/GitHub_Actions-2088FF?style=flat-square&amp;logo=githubactions&amp;logoColor=white" />
+  <img alt="Render" src="https://img.shields.io/badge/Render-000000?style=flat-square" />
+  <img alt="Vercel" src="https://img.shields.io/badge/Vercel-000000?style=flat-square&amp;logo=vercel&amp;logoColor=white" />
+</p>
+
 ---
 
 **Tuklas** (Filipino: *to discover*) is a voice-first AI tutor that teaches in the language a child
@@ -200,6 +226,7 @@ plan/       Build specs (product, session, multimodal input, cost, architecture)
 
 ## Pitch & demo
 
+- **Live site:** [tuklas.tnf-ex.tech](https://tuklas.tnf-ex.tech/)
 - **Deck:** [`pitch/index.html`](pitch/index.html) — open in a browser (arrow keys / click).
 - **Speaker notes & 2-minute script:** [`pitch/deck.md`](pitch/deck.md).
 
