@@ -576,6 +576,74 @@ export default function TutorPage() {
     value: code,
   }));
 
+  const flashcardsOverlay = flashOpen ? (
+    <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-background/95 p-6 backdrop-blur">
+      {flashcards.length === 0 || cardIndex >= flashcards.length ? (
+        <div className="flex flex-col items-center gap-5 text-center">
+          <p className="font-mono text-xs tracking-widest text-muted-foreground uppercase">
+            Deck finished
+          </p>
+          <p className="font-heading text-2xl font-semibold">
+            {answered > 0 ? `${answered} cards reviewed. Nice work!` : "Nothing due right now."}
+          </p>
+          <Button
+            onClick={() => {
+              setFlashOpen(false);
+              void refreshMemory();
+            }}
+          >
+            Close
+          </Button>
+        </div>
+      ) : (
+        <>
+          <p className="font-mono text-xs tracking-widest text-muted-foreground uppercase">
+            Card {cardIndex + 1} / {flashcards.length} · {flashcards[cardIndex].skill}
+          </p>
+          <div className="mt-6 flex w-full max-w-md flex-col items-center gap-6 rounded-2xl border bg-card p-10 text-center shadow-sm">
+            <p className="font-heading text-4xl font-semibold tracking-tight">
+              {flashcards[cardIndex].problem ?? flashcards[cardIndex].skill}
+            </p>
+            <button
+              type="button"
+              onClick={() => speak(flashcards[cardIndex].problem ?? flashcards[cardIndex].skill)}
+              className="font-mono text-xs text-muted-foreground underline underline-offset-2"
+            >
+              Play again
+            </button>
+            {revealed ? (
+              <p className="font-heading text-3xl text-primary">
+                {flashcards[cardIndex].expected ?? "—"}
+              </p>
+            ) : (
+              <Button variant="outline" onClick={() => setRevealed(true)}>
+                Show answer
+              </Button>
+            )}
+          </div>
+          <div className="mt-8 flex gap-3">
+            <Button variant="outline" onClick={() => void answerCard(false)} disabled={flashBusy}>
+              Missed it
+            </Button>
+            <Button onClick={() => void answerCard(true)} disabled={flashBusy}>
+              Got it
+            </Button>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setFlashOpen(false);
+              void refreshMemory();
+            }}
+            className="mt-5 font-mono text-xs text-muted-foreground underline underline-offset-2"
+          >
+            Close
+          </button>
+        </>
+      )}
+    </div>
+  ) : null;
+
   if (phase === "setup") {
     const isCustom = subject === "Other";
     const topics = SUBJECTS.find((item) => item.value === subject)?.topics ?? [];
@@ -640,11 +708,9 @@ export default function TutorPage() {
               >
                 {noteBusy ? "Writing…" : "Note for home"}
               </Button>
-              {notebook.length > 0 ? (
-                <Button size="lg" variant="secondary" onClick={() => void openFlashcards()}>
-                  Practice flashcards ({notebook.length})
-                </Button>
-              ) : null}
+              <Button size="lg" variant="secondary" onClick={() => void openFlashcards()}>
+                Practice flashcards{notebook.length > 0 ? ` (${notebook.length})` : ""}
+              </Button>
             </div>
             {note ? <p className="text-sm">{note}</p> : null}
 
@@ -906,75 +972,7 @@ export default function TutorPage() {
           </>
         )}
 
-        {flashOpen ? (
-          <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-background/95 p-6 backdrop-blur">
-            {flashcards.length === 0 || cardIndex >= flashcards.length ? (
-              <div className="flex flex-col items-center gap-5 text-center">
-                <p className="font-mono text-xs tracking-widest text-muted-foreground uppercase">
-                  Deck finished
-                </p>
-                <p className="font-heading text-2xl font-semibold">
-                  {answered > 0 ? `${answered} cards reviewed. Nice work!` : "Nothing due right now."}
-                </p>
-                <Button                   onClick={() => {
-                    setFlashOpen(false);
-                    void refreshMemory();
-                  }}>Close</Button>
-              </div>
-            ) : (
-              <>
-                <p className="font-mono text-xs tracking-widest text-muted-foreground uppercase">
-                  Card {cardIndex + 1} / {flashcards.length} · {flashcards[cardIndex].skill}
-                </p>
-                <div className="mt-6 flex w-full max-w-md flex-col items-center gap-6 rounded-2xl border bg-card p-10 text-center shadow-sm">
-                  <p className="font-heading text-4xl font-semibold tracking-tight">
-                    {flashcards[cardIndex].problem ?? flashcards[cardIndex].skill}
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      speak(flashcards[cardIndex].problem ?? flashcards[cardIndex].skill)
-                    }
-                    className="font-mono text-xs text-muted-foreground underline underline-offset-2"
-                  >
-                    Play again
-                  </button>
-                  {revealed ? (
-                    <p className="font-heading text-3xl text-primary">
-                      {flashcards[cardIndex].expected ?? "—"}
-                    </p>
-                  ) : (
-                    <Button variant="outline" onClick={() => setRevealed(true)}>
-                      Show answer
-                    </Button>
-                  )}
-                </div>
-                <div className="mt-8 flex gap-3">
-                  <Button
-                    variant="outline"
-                    onClick={() => void answerCard(false)}
-                    disabled={flashBusy}
-                  >
-                    Missed it
-                  </Button>
-                  <Button onClick={() => void answerCard(true)} disabled={flashBusy}>
-                    Got it
-                  </Button>
-                </div>
-                <button
-                  type="button"
-                                    onClick={() => {
-                    setFlashOpen(false);
-                    void refreshMemory();
-                  }}
-                  className="mt-5 font-mono text-xs text-muted-foreground underline underline-offset-2"
-                >
-                  Close
-                </button>
-              </>
-            )}
-          </div>
-        ) : null}
+        {flashcardsOverlay}
       </div>
     );
   }
@@ -991,9 +989,14 @@ export default function TutorPage() {
             {LANGUAGES[homeLang].label} · Grade {level}
           </Badge>
         </div>
-        <Button variant="outline" size="sm" onClick={end}>
-          End session
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" onClick={() => void openFlashcards()}>
+            Flashcards
+          </Button>
+          <Button variant="outline" size="sm" onClick={end}>
+            End session
+          </Button>
+        </div>
       </header>
 
       <div className="mx-auto flex min-h-0 w-full max-w-3xl flex-1 flex-col">
@@ -1165,6 +1168,7 @@ export default function TutorPage() {
           </div>
         </section>
       </div>
+      {flashcardsOverlay}
     </div>
   );
 }
