@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState, type ChangeEvent } from "react";
 import Link from "next/link";
 import Image from "next/image";
-import { ArrowLeft, ArrowUp, Camera, ImageUp, Layers, LogOut, Mic, Square } from "lucide-react";
+import { ArrowLeft, ArrowUp, Calculator, Camera, Delete, ImageUp, Layers, LogOut, Mic, Square } from "lucide-react";
 import { Attachment, AttachmentMedia } from "@/components/ui/attachment";
 import { Badge } from "@/components/ui/badge";
 import { Bubble, BubbleContent } from "@/components/ui/bubble";
@@ -203,6 +203,7 @@ export default function TutorPage() {
   const [busy, setBusy] = useState(false);
   const [scanning, setScanning] = useState(false);
   const [pendingImage, setPendingImage] = useState<string | null>(null);
+  const [showKeypad, setShowKeypad] = useState(false);
   const [notebook, setNotebook] = useState<NotebookError[]>([]);
   const [history, setHistory] = useState<HistorySession[]>([]);
   const [note, setNote] = useState<string | null>(null);
@@ -462,11 +463,8 @@ export default function TutorPage() {
     void refreshMemory();
   }, [sessionId, refreshMemory]);
 
-  const toggleMic = useCallback(async () => {
-    if (status === "listening") {
-      recognitionRef.current?.stop();
-      return;
-    }
+  const startListening = useCallback(async () => {
+    if (status === "listening" || busy || scanning) return;
     if (!window.isSecureContext) {
       setError(
         "Kailangan ng https o localhost para sa mikropono. Buksan ang http://localhost:3000.",
@@ -510,12 +508,13 @@ export default function TutorPage() {
       setInterim("");
       setStatus("idle");
       const code = event.error;
-      if (code === "no-speech") setError("Wala akong narinig. Subukan ulit.");
+      if (code === "no-speech")
+        setError("Wala akong narinig. Pindutin at hawakan habang nagsasalita.");
       else if (code === "not-allowed" || code === "service-not-allowed")
         setError("Hindi pinayagan ang mikropono. Payagan ito sa browser at subukan ulit.");
       else if (code === "audio-capture") setError("Walang nakita na mikropono.");
       else if (code === "network") setError("May problema sa network para sa voice input.");
-      else setError(`Voice input error: ${code}`);
+      else if (code !== "aborted") setError(`Voice input error: ${code}`);
     };
     recognition.onend = () => {
       setStatus((current) => (current === "listening" ? "idle" : current));
@@ -524,7 +523,11 @@ export default function TutorPage() {
     setError(null);
     setStatus("listening");
     recognition.start();
-  }, [status, homeLang, sendTurn]);
+  }, [status, busy, scanning, homeLang, sendTurn]);
+
+  const stopListening = useCallback(() => {
+    recognitionRef.current?.stop();
+  }, []);
 
   const handleScan = useCallback(
     async (file: File) => {
@@ -1100,6 +1103,42 @@ export default function TutorPage() {
           </div>
 
           <div className="border-t p-4">
+            {showKeypad ? (
+              <div className="mx-auto mb-3 grid max-w-xs grid-cols-3 gap-2">
+                {["1", "2", "3", "4", "5", "6", "7", "8", "9"].map((digit) => (
+                  <button
+                    key={digit}
+                    type="button"
+                    onClick={() => setTextInput((value) => value + digit)}
+                    className="h-12 rounded-lg border bg-card text-lg font-medium transition-colors hover:bg-muted"
+                  >
+                    {digit}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  onClick={() => setTextInput((value) => value.slice(0, -1))}
+                  title="Backspace"
+                  className="flex h-12 items-center justify-center rounded-lg border bg-card transition-colors hover:bg-muted"
+                >
+                  <Delete />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTextInput((value) => value + "0")}
+                  className="h-12 rounded-lg border bg-card text-lg font-medium transition-colors hover:bg-muted"
+                >
+                  0
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTextInput((value) => value + ".")}
+                  className="h-12 rounded-lg border bg-card text-lg font-medium transition-colors hover:bg-muted"
+                >
+                  .
+                </button>
+              </div>
+            ) : null}
             <div className="rounded-2xl border bg-background p-2 transition-shadow focus-within:ring-2 focus-within:ring-ring/30">
               {pendingImage ? (
                 <div className="mb-2 flex items-center gap-2 rounded-lg border bg-muted/40 p-2">
@@ -1159,16 +1198,30 @@ export default function TutorPage() {
                   <Button
                     variant="ghost"
                     size="icon"
-                    onClick={() => {
-                      void toggleMic();
+                    onPointerDown={(e) => {
+                      e.preventDefault();
+                      void startListening();
                     }}
+                    onPointerUp={stopListening}
+                    onPointerLeave={stopListening}
+                    onPointerCancel={stopListening}
                     disabled={busy || scanning}
-                    title={status === "listening" ? "Stop listening" : "Speak"}
+                    title="Hold to talk"
                     className={cn(
                       status === "listening" && "bg-destructive/10 text-destructive hover:bg-destructive/20",
                     )}
                   >
                     {status === "listening" ? <Square /> : <Mic />}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => setShowKeypad((value) => !value)}
+                    disabled={busy || scanning}
+                    title="Number pad"
+                    className={cn(showKeypad && "bg-muted")}
+                  >
+                    <Calculator />
                   </Button>
                 </div>
                 <Button
@@ -1189,7 +1242,7 @@ export default function TutorPage() {
             <p className="mt-2 font-mono text-xs text-muted-foreground">
               {status === "listening"
                 ? "Nakikinig… magsalita ngayon."
-                : "Attach a photo of the worksheet, tap the mic, or type."}
+                : "Hold the mic and talk, tap the numbers, or attach a photo."}
             </p>
             <input
               ref={cameraInputRef}
