@@ -8,10 +8,11 @@
 ---
 
 ## Slide 1 — Title
-> **The internet is out. Class is still on.**
+> **It teaches in the language they think in.**
 
 **Notes:** Open with the product, not the problem. Tuklas (Filipino: *to discover*) is a
 voice tutor that teaches in the child's mother tongue, from the worksheet in their hand.
+It needs a connection — voice is server-side — so never imply it runs offline.
 
 ## Slide 2 — The problem
 - **~9 in 10** Filipino 10-year-olds can't read an age-appropriate text *(World Bank)*
