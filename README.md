@@ -73,6 +73,7 @@ sessions, flashcards, and even a note to their parents.
 - **History & resume** — past lessons with full transcripts; returning learners skip onboarding.
 - **Tap-to-answer number pad** — answers work in every language, even without speech recognition.
 - **Server-enforced caps** — minutes, scans and sessions are limited so a school knows what it costs.
+- **Visible cost, not a slogan** — every session records LLM tokens, cached TTS characters and speech seconds; set unit prices for a per-class ₱ estimate.
 
 ## How it works
 

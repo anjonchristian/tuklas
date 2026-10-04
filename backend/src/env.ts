@@ -32,6 +32,16 @@ export const env = {
     scansPerSession: num(process.env.CAP_SCANS_PER_SESSION, 3),
     sessionsPerDay: num(process.env.CAP_SESSIONS_PER_DAY, 3),
   },
+
+  // Optional unit prices — only used to turn the usage counters into an estimate.
+  // 0 means "not priced"; the raw counters are still reported.
+  price: {
+    llmPerMTok: num(process.env.PRICE_LLM_PER_MTOK, 0),
+    ttsPerMChar: num(process.env.PRICE_TTS_PER_MCHAR, 0),
+    sttPerMin: num(process.env.PRICE_STT_PER_MIN, 0),
+  },
+
+  prewarmTts: (process.env.PREWARM_TTS ?? "1") !== "0",
 };
 
 export type Env = typeof env;

@@ -179,7 +179,7 @@ export function parseGradeJson(raw: string): GradeResult {
   return { isAnswer: false, correct: null, expected: "", skill: "general" };
 }
 
-const ASK_BACK: Record<string, string> = {
+export const ASK_BACK: Record<string, string> = {
   fil: "Ikaw naman, ano ang susunod?",
   ceb: "Ikaw naman, unsa ang sunod?",
   ilo: "Sika naman, ania ti sumaruno?",

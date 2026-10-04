@@ -4,9 +4,8 @@ import { env } from "./env";
 import { getLanguage } from "./languages";
 import { chatComplete, extractPage, synthesize, transcribe, type ChatMessage } from "./providers";
 import { buildClassScriptPrompt, buildGradePrompt, buildGreeting, buildParentNotePrompt, buildSystemPrompt, enforceHintPolicy, parseGradeJson, type GradeResult } from "./tutor";
-import { makeRepo, type Repo } from "./store";
-
-const repo: Repo = makeRepo();
+import { repo, ttsCache } from "./context";
+import { usageView } from "./usage";
 
 function sessionMinutes(startedAt: Date, endedAt: Date | null) {
   const end = endedAt ? endedAt.getTime() : Date.now();
@@ -33,6 +32,7 @@ router.get("/health", (_req, res) => {
       tts: env.elevenLabsKey ? "elevenlabs" : "browser-fallback",
     },
     caps: env.caps,
+    pricing: env.price,
   });
 });
 
@@ -93,12 +93,19 @@ router.post("/api/tutor/start", async (req, res) => {
   // Speak the greeting with the real voice too (not the browser fallback).
   let audio: { base64: string; mime: string } | null = null;
   try {
-    const tts = await synthesize(greeting, homeLang);
-    if (tts) audio = { base64: tts.audioBase64, mime: tts.mime };
+    const tts = await synthesize(greeting, homeLang, ttsCache);
+    if (tts) {
+      audio = { base64: tts.audioBase64, mime: tts.mime };
+      await repo.addUsage(session.id, {
+        ttsChars: tts.cached ? 0 : tts.chars,
+        ttsCachedChars: tts.cached ? tts.chars : 0,
+      });
+    }
   } catch {
     audio = null;
   }
 
+  const fresh = await repo.getSession(session.id);
   res.json({
     sessionId: session.id,
     greeting,
@@ -106,6 +113,7 @@ router.post("/api/tutor/start", async (req, res) => {
     reteach: reteach.map((e) => ({ skill: e.skill, attempts: e.attempts })),
     language: { code: homeLang, label: getLanguage(homeLang).label },
     minutes: { sessionMin: 0, cap: env.caps.minutesPerSession },
+    usage: usageView(fresh),
   });
 });
 
@@ -143,6 +151,7 @@ router.post("/api/tutor/turn", async (req, res) => {
 
   // 1) Grade the child's answer in a focused call — the Error Notebook depends on it.
   let grade: GradeResult = { isAnswer: false, correct: null, expected: "", skill: "general" };
+  let llmTokens = 0;
   try {
     const graded = await chatComplete(
       [
@@ -160,6 +169,7 @@ router.post("/api/tutor/turn", async (req, res) => {
       ],
       `${session.id}-grade`,
     );
+    llmTokens += graded.tokens;
     grade = parseGradeJson(graded.text);
   } catch {
     // grading failure must not break the turn
@@ -194,6 +204,7 @@ router.post("/api/tutor/turn", async (req, res) => {
   ];
 
   const completion = await chatComplete(messages, session.id);
+  llmTokens += completion.tokens;
   const filtered = enforceHintPolicy(completion.text, session.homeLang);
 
   await repo.addTurn({ sessionId, speaker: "learner", text, lang: session.homeLang, flagged: false });
@@ -214,12 +225,21 @@ router.post("/api/tutor/turn", async (req, res) => {
   }
 
   let audio: { base64: string; mime: string; cached: boolean } | null = null;
+  let ttsChars = 0;
+  let ttsCachedChars = 0;
   try {
-    const tts = await synthesize(filtered.text, session.homeLang);
-    if (tts) audio = { base64: tts.audioBase64, mime: tts.mime, cached: tts.cached };
+    const tts = await synthesize(filtered.text, session.homeLang, ttsCache);
+    if (tts) {
+      audio = { base64: tts.audioBase64, mime: tts.mime, cached: tts.cached };
+      if (tts.cached) ttsCachedChars = tts.chars;
+      else ttsChars = tts.chars;
+    }
   } catch {
     audio = null;
   }
+
+  await repo.addUsage(session.id, { llmTokens, ttsChars, ttsCachedChars });
+  const fresh = await repo.getSession(session.id);
 
   res.json({
     reply: { text: filtered.text, lang: session.homeLang, flagged: filtered.flagged },
@@ -227,6 +247,7 @@ router.post("/api/tutor/turn", async (req, res) => {
     audio,
     mocked: { llm: completion.mocked },
     minutes: { sessionMin: Number(minutes.toFixed(2)), cap: env.caps.minutesPerSession },
+    usage: usageView(fresh),
   });
 });
 
@@ -247,6 +268,7 @@ router.post("/api/scan", async (req, res) => {
     const result = await extractPage(imageDataUrl, session.id);
     await repo.setSessionPage(session.id, result.text, session.scanCount + 1);
     await repo.addTurn({ sessionId, speaker: "learner", text: `Ito ang nasa aking pahina: ${result.text}`, lang: session.homeLang, flagged: false });
+    await repo.addUsage(session.id, { llmTokens: result.tokens });
     res.json({ text: result.text, items: result.items, confidence: result.confidence, mocked: result.mocked });
   } catch (err) {
     res.status(502).json({ error: "Hindi mabasa ang pahina. Subukan ulit, o i-type ang problema.", detail: String(err).slice(0, 200) });
@@ -262,7 +284,8 @@ router.post("/api/session/end", async (req, res) => {
   const minutes = sessionMinutes(session.startedAt, session.endedAt);
   await repo.endSession(session.id, Number(minutes.toFixed(2)));
   const open = await repo.listOpenErrors(session.profileId);
-  res.json({ minutes: Number(minutes.toFixed(2)), openErrors: open.length });
+  const fresh = await repo.getSession(session.id);
+  res.json({ minutes: Number(minutes.toFixed(2)), openErrors: open.length, usage: usageView(fresh) });
 });
 
 // ── Speech-to-text (server-side, so any language/device works) ─────────────
@@ -270,12 +293,19 @@ router.post("/api/stt", async (req, res) => {
   const schema = z.object({
     audioBase64: z.string().min(1),
     mime: z.string().optional(),
+    sessionId: z.string().optional(),
+    seconds: z.number().positive().optional(),
   });
   const parsed = schema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Invalid body" });
   try {
     const buffer = Buffer.from(parsed.data.audioBase64, "base64");
     const result = await transcribe(buffer, parsed.data.mime ?? "audio/webm");
+    // Attribute speech minutes to the session. Fall back to a ~24 kbps estimate.
+    const seconds = parsed.data.seconds ?? Math.min((buffer.length * 8) / 24_000, 120);
+    if (parsed.data.sessionId) {
+      await repo.addUsage(parsed.data.sessionId, { sttSeconds: Number(seconds.toFixed(2)) });
+    }
     res.json(result);
   } catch (err) {
     res.status(502).json({
@@ -333,8 +363,16 @@ router.get("/api/session/:sessionId", async (req, res) => {
       endedAt: session.endedAt,
       state: session.state,
     },
+    usage: usageView(session),
     turns: turns.map((t) => ({ speaker: t.speaker, text: t.text, createdAt: t.createdAt })),
   });
+});
+
+// ── Per-session usage counters (tokens · TTS chars · STT seconds) ────────────
+router.get("/api/session/:sessionId/usage", async (req, res) => {
+  const session = await repo.getSession(req.params.sessionId);
+  if (!session) return res.status(404).json({ error: "Unknown session" });
+  res.json({ sessionId: session.id, usage: usageView(session), prices: env.price });
 });
 
 // ── Outputs for home and class ─────────────────────────────────────────────
@@ -359,7 +397,7 @@ router.post("/api/parent-note", async (req, res) => {
     completion.text.trim() || "Kumustahin ang bata at tanungin kung ano ang pinag-aralan ngayong araw.";
   let audio: { base64: string; mime: string } | null = null;
   try {
-    const tts = await synthesize(text, homeLang);
+    const tts = await synthesize(text, homeLang, ttsCache);
     if (tts) audio = { base64: tts.audioBase64, mime: tts.mime };
   } catch {
     audio = null;

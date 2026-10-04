@@ -67,7 +67,7 @@
       .chip {
         display: inline-block; font-family: var(--mono); font-size: 0.75rem; letter-spacing: 0.12em;
         text-transform: uppercase; color: var(--green); background: var(--gold-soft);
-        border-radius: 999px; padding: 0.35rem 0.75rem;
+        border-radius: 999px; padding: 0.35rem 0.75rem; text-decoration: none;
       }
       .brand { display: flex; align-items: center; gap: 0.75rem; }
       .brand img { width: 52px; height: 52px; border-radius: 12px; }
@@ -104,6 +104,9 @@
         <p class="lead" style="margin-top: 1.2rem">
           A voice tutor that teaches in the child's mother tongue — from the worksheet in their hand,
           in one step at a time.
+        </p>
+        <p style="margin-top: 1.4rem">
+          <a class="chip" href="https://tuklas.tnf-ex.tech/" target="_blank" rel="noreferrer" onclick="event.stopPropagation()">tuklas.tnf-ex.tech</a>
         </p>
         <p class="note">Arrow keys / space to advance · Tuklas (Filipino: “to discover”)</p>
       </section>
@@ -222,13 +225,13 @@
 
       <section class="slide">
         <p class="eyebrow">Lean by design</p>
-        <h2>Cost per learner approaches zero.</h2>
+        <h2>Free to the learner. Bounded to run.</h2>
         <ul>
-          <li><strong>Cached audio.</strong> Repeating content is spoken once, then replayed at ₱0.</li>
-          <li><strong>Runs in a browser</strong> on a shared low-end phone — no install, no account.</li>
-          <li><strong>Two real voices, honest the rest of the way:</strong> Tagalog and Cebuano get a natural voice; the other 30+ languages teach by text today, with a Philippine-tuned speech model on the roadmap.</li>
-          <li><strong>Minutes are capped server-side</strong> — the school sees what it costs, and pays for nothing it didn't use.</li>
-          <li><strong>No heavy infra:</strong> serverless API + a single managed Postgres; one Docker image, auto-built in CI.</li>
+          <li><strong>No per-seat license, no account.</strong> A school pays nothing per child — and nothing for a child who never uses it.</li>
+          <li><strong>Not “₱0 to run” — low and capped.</strong> Each new spoken step costs a little LLM and voice; the app records tokens, TTS characters and speech seconds for every session.</li>
+          <li><strong>Cached audio is free across restarts.</strong> Every clip is keyed by a hash and stored, so repeats — greetings, “Balikan natin”, feedback — replay at ₱0 on any instance.</li>
+          <li><strong>Caps are enforced server-side:</strong> 10 min/session · 30 min/week · 3 scans/session · 3 sessions/day.</li>
+          <li><strong>We can show the number.</strong> The usage endpoint returns the real counters; set unit prices and it becomes a ₱ estimate per class — no slogan.</li>
         </ul>
       </section>
 
@@ -273,10 +276,24 @@
       </section>
 
       <section class="slide">
+        <p class="eyebrow">The team</p>
+        <h2>Four people, one weekend.</h2>
+        <ul>
+          <li><strong>Anjon Christian M. Paderez</strong> — Team Representative</li>
+          <li><strong>Rob Godwin B. Raymundo</strong></li>
+          <li><strong>Francis Luiji R. Llanto</strong></li>
+          <li><strong>Jamey Felisha Arguelles</strong></li>
+        </ul>
+        <p class="note">Educational Crisis · Shift to Lean Open Learning · Philippines</p>
+      </section>
+
+      <section class="slide">
         <div class="brand small"><img src="icon.png" alt="Tuklas" /><span class="name">Tuklas</span></div>
         <h1 style="margin-top: 1.2rem">Every child should learn<br />in the language they think in.</h1>
         <p class="lead" style="margin-top: 1rem">And no child should be forgotten by the tool that teaches them.</p>
-        <p class="note" style="margin-top: 1.6rem">Try it · live URL in the submission · open source repositories included</p>
+        <p class="note" style="margin-top: 1.6rem">
+          Try it live at <a href="https://tuklas.tnf-ex.tech/" target="_blank" rel="noreferrer" onclick="event.stopPropagation()" style="color: var(--green)">tuklas.tnf-ex.tech</a>
+        </p>
       </section>
     </div>
 

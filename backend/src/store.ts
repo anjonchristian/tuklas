@@ -32,6 +32,11 @@ export const sessions = pgTable("sessions", {
   pageContext: text("page_context"),
   scanCount: integer("scan_count").notNull().default(0),
   minutesUsed: doublePrecision("minutes_used").notNull().default(0),
+  // Per-session usage counters (to back the cost claim with real data).
+  llmTokens: integer("llm_tokens").notNull().default(0),
+  ttsChars: integer("tts_chars").notNull().default(0),
+  ttsCachedChars: integer("tts_cached_chars").notNull().default(0),
+  sttSeconds: doublePrecision("stt_seconds").notNull().default(0),
   state: text("state").notNull().default("active"),
   startedAt: timestamp("started_at", { withTimezone: true }).defaultNow().notNull(),
   endedAt: timestamp("ended_at", { withTimezone: true }),
@@ -72,6 +77,15 @@ export const errorEvents = pgTable(
   }),
 );
 
+/** Persistent TTS cache, keyed by sha256(text|voice|model). Makes replays free across restarts. */
+export const ttsCache = pgTable("tts_cache", {
+  hash: text("hash").primaryKey(),
+  mime: text("mime").notNull(),
+  audioBase64: text("audio_base64").notNull(),
+  chars: integer("chars").notNull().default(0),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
 // ── Types ───────────────────────────────────────────────────────────────────
 export interface ProfileRow {
   id: string;
@@ -91,6 +105,10 @@ export interface SessionRow {
   pageContext: string | null;
   scanCount: number;
   minutesUsed: number;
+  llmTokens: number;
+  ttsChars: number;
+  ttsCachedChars: number;
+  sttSeconds: number;
   state: string;
   startedAt: Date;
   endedAt: Date | null;
@@ -121,10 +139,17 @@ export interface ErrorRow {
   resolvedAt: Date | null;
 }
 
+export interface UsageDelta {
+  llmTokens?: number;
+  ttsChars?: number;
+  ttsCachedChars?: number;
+  sttSeconds?: number;
+}
+
 export interface Repo {
   upsertProfile(p: { id: string; nickname: string; homeLang: string; level: number; classId?: string | null }): Promise<ProfileRow>;
   getProfile(id: string): Promise<ProfileRow | undefined>;
-  createSession(s: Omit<SessionRow, "id" | "startedAt" | "endedAt" | "minutesUsed" | "state" | "scanCount" | "pageContext">): Promise<SessionRow>;
+  createSession(s: Omit<SessionRow, "id" | "startedAt" | "endedAt" | "minutesUsed" | "llmTokens" | "ttsChars" | "ttsCachedChars" | "sttSeconds" | "state" | "scanCount" | "pageContext">): Promise<SessionRow>;
   getSession(id: string): Promise<SessionRow | undefined>;
   setSessionPage(id: string, pageContext: string, scanCount: number): Promise<void>;
   endSession(id: string, minutesUsed: number): Promise<void>;
@@ -145,6 +170,11 @@ export interface Repo {
     expected?: string | null;
   }): Promise<void>;
   resolveError(profileId: string, skill: string): Promise<void>;
+  /** Persistent TTS cache keyed by sha256(text|voice|model) — makes replays free across restarts. */
+  getCachedAudio(hash: string): Promise<{ audioBase64: string; mime: string } | undefined>;
+  putCachedAudio(hash: string, audioBase64: string, mime: string, chars: number): Promise<void>;
+  /** Increment the per-session usage counters. No-op when the session is unknown. */
+  addUsage(sessionId: string, delta: UsageDelta): Promise<void>;
 }
 
 const id = (prefix: string) => `${prefix}_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
@@ -167,6 +197,7 @@ class MemoryRepo implements Repo {
   private sessions = new Map<string, SessionRow>();
   private turns: TurnRow[] = [];
   private errors = new Map<string, ErrorRow>();
+  private tts = new Map<string, { audioBase64: string; mime: string }>();
   private key(profileId: string, skill: string) {
     return `${profileId}::${skill.toLowerCase()}`;
   }
@@ -183,8 +214,8 @@ class MemoryRepo implements Repo {
   async getProfile(profileId: string) {
     return this.profiles.get(profileId);
   }
-  async createSession(s: Omit<SessionRow, "id" | "startedAt" | "endedAt" | "minutesUsed" | "state" | "scanCount" | "pageContext">) {
-    const row: SessionRow = { ...s, id: id("ses"), pageContext: null, scanCount: 0, minutesUsed: 0, state: "active", startedAt: new Date(), endedAt: null };
+  async createSession(s: Omit<SessionRow, "id" | "startedAt" | "endedAt" | "minutesUsed" | "llmTokens" | "ttsChars" | "ttsCachedChars" | "sttSeconds" | "state" | "scanCount" | "pageContext">) {
+    const row: SessionRow = { ...s, id: id("ses"), pageContext: null, scanCount: 0, minutesUsed: 0, llmTokens: 0, ttsChars: 0, ttsCachedChars: 0, sttSeconds: 0, state: "active", startedAt: new Date(), endedAt: null };
     this.sessions.set(row.id, row);
     return row;
   }
@@ -291,6 +322,25 @@ class MemoryRepo implements Repo {
       .sort((a, b) => b.startedAt.getTime() - a.startedAt.getTime())
       .slice(0, limit);
   }
+  async getCachedAudio(hash: string) {
+    return this.tts.get(hash);
+  }
+  async putCachedAudio(hash: string, audioBase64: string, mime: string) {
+    // Bound the in-memory cache; evict the oldest insertion first.
+    if (this.tts.size >= 400) {
+      const oldest = this.tts.keys().next().value;
+      if (oldest) this.tts.delete(oldest);
+    }
+    this.tts.set(hash, { audioBase64, mime });
+  }
+  async addUsage(sessionId: string, delta: UsageDelta) {
+    const s = this.sessions.get(sessionId);
+    if (!s) return;
+    s.llmTokens += delta.llmTokens ?? 0;
+    s.ttsChars += delta.ttsChars ?? 0;
+    s.ttsCachedChars += delta.ttsCachedChars ?? 0;
+    s.sttSeconds += delta.sttSeconds ?? 0;
+  }
 }
 
 // ── Drizzle repo (Supabase / Neon Postgres) ─────────────────────────────────
@@ -309,7 +359,7 @@ class DrizzleRepo implements Repo {
     const [row] = await this.db.select().from(profiles).where(eq(profiles.id, profileId)).limit(1);
     return row as ProfileRow | undefined;
   }
-  async createSession(s: Omit<SessionRow, "id" | "startedAt" | "endedAt" | "minutesUsed" | "state" | "scanCount" | "pageContext">) {
+  async createSession(s: Omit<SessionRow, "id" | "startedAt" | "endedAt" | "minutesUsed" | "llmTokens" | "ttsChars" | "ttsCachedChars" | "sttSeconds" | "state" | "scanCount" | "pageContext">) {
     const [row] = await this.db.insert(sessions).values({ ...s, id: id("ses") }).returning();
     return row as SessionRow;
   }
@@ -427,6 +477,24 @@ class DrizzleRepo implements Repo {
         nextDueAt: new Date(Date.now() + interval * 24 * 60 * 60 * 1000),
       })
       .where(and(eq(errorEvents.profileId, profileId), eq(errorEvents.skill, skill)));
+  }
+  async getCachedAudio(hash: string) {
+    const [row] = await this.db.select().from(ttsCache).where(eq(ttsCache.hash, hash)).limit(1);
+    return row ? { audioBase64: row.audioBase64, mime: row.mime } : undefined;
+  }
+  async putCachedAudio(hash: string, audioBase64: string, mime: string, chars: number) {
+    await this.db.insert(ttsCache).values({ hash, audioBase64, mime, chars }).onConflictDoNothing();
+  }
+  async addUsage(sessionId: string, delta: UsageDelta) {
+    await this.db
+      .update(sessions)
+      .set({
+        llmTokens: sql`${sessions.llmTokens} + ${delta.llmTokens ?? 0}`,
+        ttsChars: sql`${sessions.ttsChars} + ${delta.ttsChars ?? 0}`,
+        ttsCachedChars: sql`${sessions.ttsCachedChars} + ${delta.ttsCachedChars ?? 0}`,
+        sttSeconds: sql`${sessions.sttSeconds} + ${delta.sttSeconds ?? 0}`,
+      })
+      .where(eq(sessions.id, sessionId));
   }
 }
 

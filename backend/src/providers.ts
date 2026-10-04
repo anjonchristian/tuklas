@@ -61,6 +61,7 @@ export interface VisionResult {
   items: ExtractedItem[];
   confidence: number;
   mocked: boolean;
+  tokens: number;
 }
 
 const VISION_PROMPT = `Extract ALL text from this page in reading order. Preserve numbers and equations exactly.
@@ -75,7 +76,7 @@ export async function extractPage(imageDataUrl: string, sessionId: string): Prom
       { number: "1", text: "3 + 4 = ___" },
       { number: "2", text: "8 - 2 = ___" },
     ];
-    return { text: items.map((i) => `${i.number}. ${i.text}`).join("   "), items, confidence: 0.9, mocked: true };
+    return { text: items.map((i) => `${i.number}. ${i.text}`).join("   "), items, confidence: 0.9, mocked: true, tokens: 0 };
   }
 
   const res = await fetch(`${env.llmBaseUrl}/chat/completions`, {
@@ -108,7 +109,8 @@ export async function extractPage(imageDataUrl: string, sessionId: string): Prom
     throw new Error(`Vision request failed: ${res.status} ${await res.text()}`);
   }
 
-  const data = (await res.json()) as { choices?: { message?: { content?: string } }[] };
+  const data = (await res.json()) as { choices?: { message?: { content?: string } }[]; usage?: { total_tokens?: number } };
+  const tokens = data.usage?.total_tokens ?? 0;
   const raw = data.choices?.[0]?.message?.content ?? "";
   const match = raw.match(/\{[\s\S]*\}/);
   if (match) {
@@ -120,13 +122,14 @@ export async function extractPage(imageDataUrl: string, sessionId: string): Prom
           items: Array.isArray(parsed.items) ? parsed.items : [],
           confidence: typeof parsed.confidence === "number" ? parsed.confidence : 0.5,
           mocked: false,
+          tokens,
         };
       }
     } catch {
       // fall through
     }
   }
-  return { text: raw, items: [], confidence: 0.4, mocked: false };
+  return { text: raw, items: [], confidence: 0.4, mocked: false, tokens };
 }
 
 export interface TtsResult {
@@ -157,10 +160,25 @@ export async function transcribe(
   return { text: data.text?.trim() ?? "", language: data.language_code ?? "" };
 }
 
-const audioCache = new Map<string, { audioBase64: string; mime: string }>();
+export interface AudioCache {
+  get(hash: string): Promise<{ audioBase64: string; mime: string } | undefined>;
+  put(hash: string, audioBase64: string, mime: string, chars: number): Promise<void>;
+}
+
+// L1: in-process; L2: the passed cache (Postgres / memory repo), so replays stay
+// free across restarts and across instances.
+const audioL1 = new Map<string, { audioBase64: string; mime: string }>();
+
+function l1Set(key: string, entry: { audioBase64: string; mime: string }) {
+  if (audioL1.size >= 400) {
+    const oldest = audioL1.keys().next().value;
+    if (oldest) audioL1.delete(oldest);
+  }
+  audioL1.set(key, entry);
+}
 
 /** Synthesize speech with ElevenLabs. Returns null to signal "use browser voice". */
-export async function synthesize(text: string, homeLang: string): Promise<TtsResult | null> {
+export async function synthesize(text: string, homeLang: string, cache?: AudioCache): Promise<TtsResult | null> {
   const lang = getLanguage(homeLang);
   if (lang.voice.provider !== "elevenlabs" || !env.elevenLabsKey) return null;
 
@@ -168,8 +186,20 @@ export async function synthesize(text: string, homeLang: string): Promise<TtsRes
   const model = lang.voice.model;
   const key = createHash("sha256").update(`${text}|${voiceId}|${model}`).digest("hex");
 
-  const hit = audioCache.get(key);
-  if (hit) return { ...hit, cached: true, chars: text.length };
+  const l1 = audioL1.get(key);
+  if (l1) return { ...l1, cached: true, chars: text.length };
+
+  if (cache) {
+    try {
+      const persisted = await cache.get(key);
+      if (persisted) {
+        l1Set(key, persisted);
+        return { ...persisted, cached: true, chars: text.length };
+      }
+    } catch {
+      // a cache read must never break a lesson
+    }
+  }
 
   const res = await fetch(
     `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}?output_format=mp3_44100_128`,
@@ -184,6 +214,13 @@ export async function synthesize(text: string, homeLang: string): Promise<TtsRes
 
   const buffer = Buffer.from(await res.arrayBuffer());
   const entry = { audioBase64: buffer.toString("base64"), mime: "audio/mpeg" };
-  audioCache.set(key, entry);
+  l1Set(key, entry);
+  if (cache) {
+    try {
+      await cache.put(key, entry.audioBase64, entry.mime, text.length);
+    } catch {
+      // best-effort persistence
+    }
+  }
   return { ...entry, cached: false, chars: text.length };
 }

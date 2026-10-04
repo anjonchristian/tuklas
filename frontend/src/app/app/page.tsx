@@ -57,6 +57,15 @@ interface Minutes {
   classDayCostPhp: number;
 }
 
+interface Usage {
+  llmTokens: number;
+  ttsChars: number;
+  ttsCachedChars: number;
+  sttSeconds: number;
+  costPhp: number | null;
+  priced: boolean;
+}
+
 interface NotebookError {
   skill: string;
   subject: string;
@@ -165,6 +174,7 @@ export default function TutorPage() {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [turns, setTurns] = useState<ChatTurn[]>([]);
   const [minutes, setMinutes] = useState<Minutes | null>(null);
+  const [usage, setUsage] = useState<Usage | null>(null);
   const [status, setStatus] = useState<"idle" | "listening" | "thinking" | "speaking">("idle");
   const [textInput, setTextInput] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -193,6 +203,7 @@ export default function TutorPage() {
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
+  const recordingStartedRef = useRef(0);
   const streamRef = useRef<MediaStream | null>(null);
   const profileIdRef = useRef<string>("");
   const cameraInputRef = useRef<HTMLInputElement | null>(null);
@@ -358,6 +369,7 @@ export default function TutorPage() {
         }
         setTurns((prev) => [...prev, { speaker: "tutor", text: data.reply.text }]);
         setMinutes(data.minutes);
+        setUsage(data.usage ?? usage);
         playReply(data.reply.text, data.audio ?? null);
       } catch {
         setError("May problema sa koneksyon. Subukan ulit.");
@@ -366,7 +378,7 @@ export default function TutorPage() {
         setBusy(false);
       }
     },
-    [sessionId, busy, minutes, playReply],
+    [sessionId, busy, minutes, usage, playReply],
   );
 
   const start = useCallback(async (overrides?: { subject?: string; topic?: string }) => {
@@ -409,6 +421,7 @@ export default function TutorPage() {
       setSessionId(data.sessionId);
       setTurns([{ speaker: "tutor", text: data.greeting }]);
       setMinutes(data.minutes);
+      setUsage(data.usage ?? null);
       setPhase("session");
       playReply(data.greeting, data.audio ?? null);
     } catch {
@@ -434,13 +447,15 @@ export default function TutorPage() {
   }, [sessionId, refreshMemory]);
 
   const transcribeAndSend = useCallback(
-    async (blob: Blob) => {
+    async (blob: Blob, seconds: number) => {
       setStatus("thinking");
       try {
         const audioBase64 = await blobToBase64(blob);
         const data = await apiPost<{ text: string; language: string }>("/api/stt", {
           audioBase64,
           mime: blob.type || "audio/webm",
+          sessionId,
+          seconds,
         });
         const text = (data.text ?? "").trim();
         if (!text) {
@@ -454,7 +469,7 @@ export default function TutorPage() {
         setStatus("idle");
       }
     },
-    [sendTurn],
+    [sendTurn, sessionId],
   );
 
   const startListening = useCallback(async () => {
@@ -490,11 +505,13 @@ export default function TutorPage() {
           setStatus("idle");
           return;
         }
-        void transcribeAndSend(blob);
+        const seconds = Math.max(0, (Date.now() - recordingStartedRef.current) / 1000);
+        void transcribeAndSend(blob, seconds);
       };
       mediaRecorderRef.current = recorder;
       setError(null);
       setStatus("listening");
+      recordingStartedRef.current = Date.now();
       recorder.start();
     } catch {
       setError("Hindi ma-access ang mikropono. Payagan ang microphone sa browser, o mag-type.");
@@ -978,6 +995,17 @@ export default function TutorPage() {
           <Badge variant="outline" className="hidden font-mono sm:inline-flex">
             {LANGUAGES[homeLang].label} · Grade {level}
           </Badge>
+          {usage ? (
+            <Badge
+              variant="outline"
+              className="hidden font-mono lg:inline-flex"
+              title="Per-session usage: LLM tokens · cached TTS chars · speech seconds"
+            >
+              {usage.llmTokens} tok · {usage.ttsCachedChars} cached ·{" "}
+              {Math.round(usage.sttSeconds)}s
+              {usage.priced && usage.costPhp != null ? ` · ₱${usage.costPhp.toFixed(2)}` : ""}
+            </Badge>
+          ) : null}
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
           <Button

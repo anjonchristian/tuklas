@@ -2,6 +2,7 @@
 
 **Track:** Educational Crisis · *Shift to Lean Open Learning* · Philippines
 **Format:** 2 min pitch + 2 min Q&A. Live deck: `pitch/index.html` (arrow keys / click).
+**Live:** https://tuklas.tnf-ex.tech/
 **One-line thesis:** *A chatbot forgets your child. This one remembers.*
 
 ---
@@ -57,8 +58,15 @@ conversation and a tutor.
 - **Class script**: three sentences the child can say to ask for help tomorrow.
 
 ## Slide 8 — Lean by design
-Cost per learner approaches zero: cached audio (₱0 replays), browser on shared low-end
-phones, server-side minute caps, no heavy infra (serverless API + one managed Postgres).
+**Free to the learner; low and bounded to run — not “₱0”.**
+- No per-seat license, no account: a school pays nothing per child.
+- Each new step costs a little LLM + voice; we record tokens, TTS characters and speech seconds.
+- Cached audio (keyed by hash, persisted) makes repeats free across restarts and instances.
+- Server-side caps: 10 min/session · 30 min/week · 3 scans/session · 3 sessions/day.
+- The usage endpoint returns the real counters; set unit prices for a ₱ estimate per class.
+
+**Notes:** Say plainly that inference and speech are not free — we make the cost *visible and
+bounded* instead of claiming zero. This is the honest version of “lean”.
 
 ## Slide 9 — Under the hood
 Next.js · Express + TypeScript (Docker → GHCR → Render) · OpenCode Go (DeepSeek V4.1 +
@@ -70,7 +78,15 @@ vision) · ElevenLabs (v3 Cebuano, v2 Tagalog) · Supabase Postgres (RLS on, Dri
 ## Slide 11 — Roadmap
 Teacher view · Mastery map · Philippine-tuned regional speech · Offline packs.
 
-## Slide 12 — Close
+## Slide 12 — Team
+- **Anjon Christian M. Paderez** — Team Representative
+- **Rob Godwin B. Raymundo**
+- **Francis Luiji R. Llanto**
+- **Jamey Felisha Arguelles**
+
+**Notes:** Name the team, then hand straight to the live site — no slides needed past this point.
+
+## Slide 13 — Close
 > **Every child should learn in the language they think in.**
 
 ---
@@ -95,9 +111,11 @@ ask at home tonight.”
 
 **[1:15–1:45] Lean**
 “It runs in a browser on a shared low-end phone. No install, no account, no per-seat
-license. Repeated audio is cached and costs nothing. It works today in Tagalog and
-Cebuano with a real voice, and for the other thirty-plus languages the answer pad means
-a Waray child can still learn — speech for those is our next milestone.”
+license — free to the learner. Running it isn't free: each new spoken step costs a little
+inference and voice, so we cache every clip by hash and cap each session server-side — and
+we show the real per-session counters on screen. It works today in Tagalog and Cebuano with
+a real voice; for the other thirty-plus languages the answer pad means a Waray child can
+still learn — speech for those is our next milestone.”
 
 **[1:45–2:00] Close**
 “Nine in ten Filipino ten-year-olds can't read an age-appropriate text, and the tools
@@ -117,10 +135,18 @@ teaches them.”
   plainly instead of pretending otherwise.
 - **“Which languages?”** Teaching content in 30+ Philippine languages; **natural voice**
   in Tagalog and Cebuano; regional speech recognition is the next milestone.
-- **“What does it cost a school?”** Cached audio + server-side minute caps shown on
-  screen; we can produce a cost statement per class from real recorded events.
+- **“What does it cost a school?”** No per-seat license — free to the learner. Running it
+  is low and bounded, not ₱0: cached audio (persisted, so repeats are free) plus
+  server-side caps (10 min/session, 30 min/week, 3 scans/session, 3 sessions/day). Every
+  session records LLM tokens, TTS characters and speech seconds, so we can produce a real
+  cost statement per class — set unit prices and it becomes a ₱ estimate.
 - **“Privacy?”** Nickname only, no full names, no audio stored, RLS enabled, images
   discarded after extraction — plain-language disclosure in the home language.
 - **“Doesn't the child just get answers?”** No — a server-side policy gives one step and
   asks for the next; we can demo it live on a scanned problem.
-- **“Team / stack?”** *(fill in: who did what, hours built).*
+- **“Team / stack?”** Anjon Christian M. Paderez (Team Representative), Rob Godwin B. Raymundo,
+  Francis Luiji R. Llanto, Jamey Felisha Arguelles — built as a one-weekend sprint. Stack: Next.js +
+  Express/TypeScript (Docker → GHCR → Render), OpenCode Go (DeepSeek V4.1 + vision), ElevenLabs voice,
+  Supabase Postgres with RLS.
+- **“Where can we try it?”** [tuklas.tnf-ex.tech](https://tuklas.tnf-ex.tech/) — open the tutor, pick a
+  language, scan a page or use the number pad.

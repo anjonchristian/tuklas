@@ -1,6 +1,7 @@
 import cors from "cors";
 import express from "express";
 import { env } from "./env";
+import { prewarmTts } from "./prewarm";
 import { router } from "./routes";
 
 const app = express();
@@ -16,4 +17,5 @@ app.use(router);
 app.listen(env.port, () => {
   console.log(`[tuklas] API listening on :${env.port}`);
   console.log(`[tuklas] database: ${env.databaseUrl ? "postgres" : "in-memory"}`);
+  void prewarmTts();
 });
